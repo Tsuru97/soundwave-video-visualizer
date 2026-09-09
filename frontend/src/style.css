@@ -294,7 +294,94 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  max-width: 250px;
+  max-width: 240px;
+}
+
+/* =========================================================================
+   WIDGET DE LÍNEA DE TIEMPO RESUMEN DE AUDIO
+   ========================================================================= */
+.timeline-summary-card {
+  background-color: rgba(15, 23, 42, 0.75);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 0.75rem 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.timeline-summary-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.timeline-title {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: #c7d2fe;
+}
+
+.timeline-total-badge {
+  font-size: 0.75rem;
+  font-family: monospace;
+  font-weight: 700;
+  color: var(--success);
+  background-color: rgba(16, 185, 129, 0.15);
+  padding: 0.15rem 0.5rem;
+  border-radius: 4px;
+}
+
+.timeline-segments {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.timeline-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.25rem 0.55rem;
+  border-radius: 6px;
+  font-size: 0.75rem;
+  font-family: monospace;
+}
+
+.timeline-chip.intro {
+  background-color: rgba(16, 185, 129, 0.15);
+  border: 1px solid rgba(16, 185, 129, 0.4);
+  color: #6ee7b7;
+}
+
+.timeline-chip.main {
+  background-color: rgba(99, 102, 241, 0.15);
+  border: 1px solid rgba(99, 102, 241, 0.4);
+  color: #a5b4fc;
+}
+
+.timeline-chip.outro {
+  background-color: rgba(217, 70, 239, 0.15);
+  border: 1px solid rgba(217, 70, 239, 0.4);
+  color: #f0abfc;
+}
+
+.timeline-arrow {
+  color: var(--text-muted);
+  font-size: 0.75rem;
+}
+
+.audio-slot-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.audio-slot-info {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  word-break: break-all;
 }
 
 .signature-status {

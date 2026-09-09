@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Soundwave Video Visualizer - Multi-Layer Canvas Designer</title>
+    <title>Soundwave Video Visualizer - Multi-Track Audio & Multi-Layer Designer</title>
     <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%236366f1'><path d='M12 3v18M8 6v12M4 9v6M16 6v12M20 9v6'/></svg>" />
     <link rel="stylesheet" href="./src/style.css" />
   </head>
@@ -16,7 +16,7 @@
           </div>
           <div>
             <h1>Soundwave Video Visualizer</h1>
-            <p class="subtitle">Generador y Diseñador Multi-Capa Client-Side</p>
+            <p class="subtitle">Generador y Diseñador Multi-Pista Client-Side</p>
           </div>
         </div>
         <div class="status-badge" id="isolation-status">
@@ -53,9 +53,8 @@
                   <circle cx="6" cy="18" r="3"></circle>
                   <circle cx="18" cy="16" r="3"></circle>
                 </svg>
-                <p>Carga un archivo de audio para comenzar tu composición</p>
+                <p>Carga la pista principal de audio para comenzar</p>
               </div>
-              <!-- Hint flotante de arrastre -->
               <div class="canvas-hint hidden" id="canvas-drag-hint">
                 <span>🖱️ Arrastra cualquier elemento en el lienzo para reposicionarlo</span>
               </div>
@@ -71,21 +70,32 @@
                     <polyline points="17 8 12 3 7 8"></polyline>
                     <line x1="12" y1="3" x2="12" y2="15"></line>
                   </svg>
-                  Cargar Archivo de Audio
+                  Cargar Pista Principal
                 </label>
                 <input type="file" id="audio-upload" accept="audio/*" style="display: none;" />
 
                 <button class="btn btn-secondary" id="btn-play-pause" disabled>
-                  <span id="play-icon">▶ Reproducir Vista Previa</span>
+                  <span id="play-icon">▶ Reproducir Secuencia Completa</span>
                 </button>
-                <span class="file-info" id="file-info">Ningún archivo cargado</span>
+                <span class="file-info" id="file-info">Ningún audio cargado</span>
               </div>
             </div>
 
-            <!-- Barra de Estado de Firma de Onda -->
+            <!-- Widget de Línea de Tiempo Resumen de Audio -->
+            <div class="timeline-summary-card hidden" id="timeline-summary-card">
+              <div class="timeline-summary-header">
+                <span class="timeline-title">⏱️ Secuencia de Audio Concatenada</span>
+                <span class="timeline-total-badge" id="timeline-total-badge">Total: 00:00</span>
+              </div>
+              <div class="timeline-segments" id="timeline-segments">
+                <!-- Se inyectan dinámicamente los bloques Intro -> Principal -> Outro -->
+              </div>
+            </div>
+
+            <!-- Barra de Estado de Procesamiento -->
             <div class="signature-status hidden" id="signature-status-bar">
               <span class="pulse-icon">⚡</span>
-              <span id="signature-status-text">Extrayendo firma de onda con Web Audio API...</span>
+              <span id="signature-status-text">Procesando audio y extrayendo firma de onda...</span>
             </div>
           </div>
 
@@ -94,7 +104,7 @@
             <!-- Pestañas de Navegación -->
             <div class="tabs-nav">
               <button class="tab-btn active" data-tab="tab-designer">🎨 Capas y Fondo</button>
-              <button class="tab-btn" data-tab="tab-wave">🎵 Onda Sonora</button>
+              <button class="tab-btn" data-tab="tab-audio">🎵 Audio e Intro/Outro</button>
               <button class="tab-btn" data-tab="tab-export">⚙️ Exportar</button>
             </div>
 
@@ -160,7 +170,7 @@
                 <!-- Lista de Capas Creadas -->
                 <div class="layers-list" id="layers-list">
                   <p class="empty-layers-msg" id="empty-layers-msg">
-                    No hay capas superpuestas. Pulsa <strong>+ Imagen</strong> o <strong>+ Texto</strong> para añadir portadas, logos, títulos o redes sociales.
+                    No hay capas superpuestas. Pulsa <strong>+ Imagen</strong> o <strong>+ Texto</strong> para añadir portadas, logos o créditos.
                   </p>
                 </div>
               </div>
@@ -226,31 +236,69 @@
               </div>
             </div>
 
-            <!-- TAB 2: ONDA SONORA -->
-            <div class="tab-content" id="tab-wave">
-              <div class="form-group">
-                <label for="visualizer-type">Estilo de la Onda Sonora</label>
-                <select id="visualizer-type" class="form-control">
-                  <option value="bars" selected>Barras de Frecuencia Simétricas</option>
-                  <option value="wave">Onda Continua (Osciloscopio)</option>
-                  <option value="circular">Onda Radial Circular</option>
-                </select>
-              </div>
-
-              <div class="form-row">
-                <div class="form-group flex-1">
-                  <label for="color-accent">Color Primario</label>
-                  <input type="color" id="color-accent" value="#6366f1" class="form-control-color" />
+            <!-- TAB 2: GESTIÓN DE AUDIO (INTRO, PRINCIPAL, OUTRO) Y ONDA -->
+            <div class="tab-content" id="tab-audio">
+              <!-- Ranuras de Audio Adicionales -->
+              <div class="designer-section">
+                <div class="section-title-row">
+                  <h4>🟢 Audio de Entrada (Intro)</h4>
+                  <button class="btn-link hidden" id="btn-remove-intro">Quitar Intro</button>
                 </div>
-                <div class="form-group flex-1">
-                  <label for="color-secondary">Color Secundario</label>
-                  <input type="color" id="color-secondary" value="#06b6d4" class="form-control-color" />
+                <div class="audio-slot-body">
+                  <label class="btn btn-secondary full-width btn-sm" for="intro-upload">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <polygon points="5 3 19 12 5 21 5 3"></polygon>
+                    </svg>
+                    Subir Audio de Intro (Jingle / Cortinilla)
+                  </label>
+                  <input type="file" id="intro-upload" accept="audio/*" style="display: none;" />
+                  <span class="audio-slot-info" id="intro-file-info">Sin audio de intro seleccionado</span>
                 </div>
               </div>
 
-              <p class="designer-hint">
-                ✨ <em>Nota: Puedes agregar tantos títulos, subtítulos o marcas como desees en la pestaña "Capas y Fondo".</em>
-              </p>
+              <div class="designer-section">
+                <div class="section-title-row">
+                  <h4>🟣 Audio de Salida (Outro)</h4>
+                  <button class="btn-link hidden" id="btn-remove-outro">Quitar Outro</button>
+                </div>
+                <div class="audio-slot-body">
+                  <label class="btn btn-secondary full-width btn-sm" for="outro-upload">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <rect x="6" y="4" width="4" height="16"></rect>
+                      <polygon points="20 4 20 20 11 12 20 4"></polygon>
+                    </svg>
+                    Subir Audio de Outro (Créditos / Despedida)
+                  </label>
+                  <input type="file" id="outro-upload" accept="audio/*" style="display: none;" />
+                  <span class="audio-slot-info" id="outro-file-info">Sin audio de outro seleccionado</span>
+                </div>
+              </div>
+
+              <!-- Estilo de Onda Sonora -->
+              <div class="designer-section">
+                <div class="section-title-row">
+                  <h4>🌊 Estilo de la Onda Sonora</h4>
+                </div>
+                <div class="form-group">
+                  <label for="visualizer-type">Forma de la Onda</label>
+                  <select id="visualizer-type" class="form-control">
+                    <option value="bars" selected>Barras de Frecuencia Simétricas</option>
+                    <option value="wave">Onda Continua (Osciloscopio)</option>
+                    <option value="circular">Onda Radial Circular</option>
+                  </select>
+                </div>
+
+                <div class="form-row">
+                  <div class="form-group flex-1">
+                    <label for="color-accent">Color Primario</label>
+                    <input type="color" id="color-accent" value="#6366f1" class="form-control-color" />
+                  </div>
+                  <div class="form-group flex-1">
+                    <label for="color-secondary">Color Secundario</label>
+                    <input type="color" id="color-secondary" value="#06b6d4" class="form-control-color" />
+                  </div>
+                </div>
+              </div>
             </div>
 
             <!-- TAB 3: CONFIGURACIÓN DE EXPORTACIÓN -->
@@ -376,7 +424,7 @@
       </div>
 
       <footer class="footer">
-        <p>Soundwave Video Visualizer &bull; Diseñador Multi-Capa y Renderizado Client-Side &bull; Docker Node.js 20 Alpine</p>
+        <p>Soundwave Video Visualizer &bull; Audio Multi-Pista y Renderizado Client-Side &bull; Docker Node.js 20 Alpine</p>
       </footer>
     </div>
     <script type="module" src="./src/main.js"></script>

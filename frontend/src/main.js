@@ -1,15 +1,21 @@
-// Soundwave Video Visualizer - Client-Side Engine & Multi-Layer Designer
-import { decodeAudioFile, extractWaveformSignature } from './audioProcessor.js';
+// Soundwave Video Visualizer - Client-Side Engine & Multi-Layer / Multi-Track Studio
+import { decodeAudioFile, extractWaveformSignature, concatenateAudioTracks, audioBufferToWavBlob } from './audioProcessor.js';
 import { renderFrame } from './videoRenderer.js';
 import { generateVideo, isWebCodecsSupported, isFileSystemAccessSupported } from './exportEngine.js';
 
-console.log('[Soundwave] Inicializando Sistema Multi-Capa y Diseñador Visual...');
+console.log('[Soundwave] Inicializando Estudio Multi-Pista y Multi-Capa...');
 
 // Estado global de la aplicación
 const state = {
-  audioFile: null,
-  audioBuffer: null,
-  waveformSignature: null,
+  // Pistas de Audio Secuenciales
+  tracks: {
+    intro: null, // { file, buffer, name }
+    main: null,  // { file, buffer, name, isMain: true }
+    outro: null  // { file, buffer, name }
+  },
+  audioBuffer: null,        // AudioBuffer unificado (Intro + Principal + Outro)
+  waveformSignature: null,  // Firma de onda continua unificada
+  audioBlobUrl: null,       // URL del Blob WAV para previsualización
   isRendering: false,
   abortController: null,
   audioContext: null,
@@ -50,6 +56,19 @@ const elements = {
   fileInfo: document.getElementById('file-info'),
   signatureStatusBar: document.getElementById('signature-status-bar'),
   signatureStatusText: document.getElementById('signature-status-text'),
+
+  // Widget de Línea de Tiempo
+  timelineSummaryCard: document.getElementById('timeline-summary-card'),
+  timelineTotalBadge: document.getElementById('timeline-total-badge'),
+  timelineSegments: document.getElementById('timeline-segments'),
+
+  // Pistas Adicionales (Intro y Outro)
+  introUpload: document.getElementById('intro-upload'),
+  introFileInfo: document.getElementById('intro-file-info'),
+  btnRemoveIntro: document.getElementById('btn-remove-intro'),
+  outroUpload: document.getElementById('outro-upload'),
+  outroFileInfo: document.getElementById('outro-file-info'),
+  btnRemoveOutro: document.getElementById('btn-remove-outro'),
 
   // Pestañas
   tabBtns: document.querySelectorAll('.tab-btn'),
@@ -229,7 +248,204 @@ function redrawPreview() {
 }
 
 // =========================================================================
-// 5. GESTIÓN DEL SISTEMA MULTI-CAPA
+// 5. MOTOR DE CONCATENACIÓN DE AUDIOS (INTRO + PRINCIPAL + OUTRO)
+// =========================================================================
+async function rebuildCombinedAudioSequence() {
+  const audioCtx = getOrCreateAudioContext();
+  const trackList = [];
+
+  if (state.tracks.intro && state.tracks.intro.buffer) {
+    trackList.push({ name: 'Intro', buffer: state.tracks.intro.buffer, type: 'intro' });
+  }
+  if (state.tracks.main && state.tracks.main.buffer) {
+    trackList.push({ name: 'Principal', buffer: state.tracks.main.buffer, isMain: true, type: 'main' });
+  }
+  if (state.tracks.outro && state.tracks.outro.buffer) {
+    trackList.push({ name: 'Outro', buffer: state.tracks.outro.buffer, type: 'outro' });
+  }
+
+  if (trackList.length === 0) {
+    state.audioBuffer = null;
+    state.waveformSignature = null;
+    elements.timelineSummaryCard.classList.add('hidden');
+    elements.btnPlayPause.disabled = true;
+    elements.btnRender.disabled = true;
+    elements.canvasOverlay.classList.remove('hidden');
+    redrawPreview();
+    return;
+  }
+
+  elements.signatureStatusBar.classList.remove('hidden', 'ready');
+  elements.signatureStatusText.textContent = 'Ensamblando y remuestreando secuencia de audio (Intro + Principal + Outro)...';
+
+  try {
+    const t0 = performance.now();
+    const { combinedBuffer, segments } = await concatenateAudioTracks(trackList, audioCtx);
+    state.audioBuffer = combinedBuffer;
+
+    const fps = parseInt(elements.fpsSelect.value, 10) || 30;
+    state.waveformSignature = extractWaveformSignature(combinedBuffer, fps, 64);
+
+    // Convertir a WAV Blob para alimentar el reproductor HTML5 con la secuencia completa
+    if (state.audioBlobUrl) {
+      URL.revokeObjectURL(state.audioBlobUrl);
+    }
+    const wavBlob = audioBufferToWavBlob(combinedBuffer);
+    state.audioBlobUrl = URL.createObjectURL(wavBlob);
+    elements.audioElement.src = state.audioBlobUrl;
+
+    const elapsedSec = ((performance.now() - t0) / 1000).toFixed(2);
+    const totalDurationStr = formatSeconds(combinedBuffer.duration);
+
+    // Actualizar Widget de Línea de Tiempo
+    elements.timelineSummaryCard.classList.remove('hidden');
+    elements.timelineTotalBadge.textContent = `Total: ${totalDurationStr}`;
+    elements.timelineSegments.innerHTML = '';
+
+    segments.forEach((seg, idx) => {
+      const chip = document.createElement('span');
+      chip.className = `timeline-chip ${trackList[idx].type || 'main'}`;
+      chip.innerHTML = `<strong>${seg.name}</strong> (${formatSeconds(seg.duration)})`;
+      elements.timelineSegments.appendChild(chip);
+
+      if (idx < segments.length - 1) {
+        const arrow = document.createElement('span');
+        arrow.className = 'timeline-arrow';
+        arrow.textContent = '➔';
+        elements.timelineSegments.appendChild(arrow);
+      }
+    });
+
+    elements.signatureStatusBar.classList.add('ready');
+    elements.signatureStatusText.innerHTML = `✅ <strong>Secuencia ensamblada en ${elapsedSec}s</strong> (${state.waveformSignature.totalFrames} fotogramas para ${totalDurationStr} de duración total).`;
+
+    elements.btnPlayPause.disabled = false;
+    elements.btnRender.disabled = false;
+    elements.canvasOverlay.classList.add('hidden');
+
+    redrawPreview();
+
+  } catch (err) {
+    console.error('[AudioProcessor] Error al ensamblar secuencia:', err);
+    elements.signatureStatusBar.classList.remove('ready');
+    elements.signatureStatusText.textContent = `❌ Error al concatenar pistas de audio: ${err.message}`;
+  }
+}
+
+// 5.1 Carga de Pista Principal
+elements.audioUpload.addEventListener('change', async (event) => {
+  const file = event.target.files[0];
+  if (!file) return;
+
+  const audioCtx = getOrCreateAudioContext();
+  elements.fileInfo.textContent = `${file.name} (${(file.size / (1024 * 1024)).toFixed(2)} MB)`;
+
+  try {
+    const buffer = await decodeAudioFile(file, audioCtx);
+    state.tracks.main = {
+      file,
+      buffer,
+      name: file.name.replace(/\.[^/.]+$/, "").substring(0, 16),
+      isMain: true
+    };
+
+    // Crear capa de texto automática si no hay ninguna
+    const textLayers = state.designer.layers.filter(l => l.type === 'text');
+    if (textLayers.length === 0) {
+      state.designer.layers.push({
+        id: `layer_txt_title`,
+        type: 'text',
+        name: 'Título Principal',
+        text: file.name.replace(/\.[^/.]+$/, ""),
+        relX: 0.5,
+        relY: 0.88,
+        fontSizeRel: 0.044,
+        color: '#ffffff',
+        fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
+        fontWeight: '700',
+        opacity: 1.0,
+        shadow: true
+      });
+      updateLayersUI();
+    }
+
+    await rebuildCombinedAudioSequence();
+
+  } catch (err) {
+    alert(`Error al decodificar la pista principal: ${err.message}`);
+  }
+});
+
+// 5.2 Carga de Audio de Entrada (Intro)
+elements.introUpload.addEventListener('change', async (event) => {
+  const file = event.target.files[0];
+  if (!file) return;
+
+  const audioCtx = getOrCreateAudioContext();
+  elements.introFileInfo.textContent = `Cargando ${file.name}...`;
+
+  try {
+    const buffer = await decodeAudioFile(file, audioCtx);
+    state.tracks.intro = {
+      file,
+      buffer,
+      name: 'Intro'
+    };
+
+    elements.introFileInfo.innerHTML = `🟢 <strong>${file.name}</strong> (${formatSeconds(buffer.duration)})`;
+    elements.btnRemoveIntro.classList.remove('hidden');
+    await rebuildCombinedAudioSequence();
+
+  } catch (err) {
+    alert(`Error al procesar el audio de Intro: ${err.message}`);
+    elements.introFileInfo.textContent = 'Error al cargar';
+  }
+});
+
+elements.btnRemoveIntro.addEventListener('click', async () => {
+  state.tracks.intro = null;
+  elements.introUpload.value = '';
+  elements.introFileInfo.textContent = 'Sin audio de intro seleccionado';
+  elements.btnRemoveIntro.classList.add('hidden');
+  await rebuildCombinedAudioSequence();
+});
+
+// 5.3 Carga de Audio de Salida (Outro)
+elements.outroUpload.addEventListener('change', async (event) => {
+  const file = event.target.files[0];
+  if (!file) return;
+
+  const audioCtx = getOrCreateAudioContext();
+  elements.outroFileInfo.textContent = `Cargando ${file.name}...`;
+
+  try {
+    const buffer = await decodeAudioFile(file, audioCtx);
+    state.tracks.outro = {
+      file,
+      buffer,
+      name: 'Outro'
+    };
+
+    elements.outroFileInfo.innerHTML = `🟣 <strong>${file.name}</strong> (${formatSeconds(buffer.duration)})`;
+    elements.btnRemoveOutro.classList.remove('hidden');
+    await rebuildCombinedAudioSequence();
+
+  } catch (err) {
+    alert(`Error al procesar el audio de Outro: ${err.message}`);
+    elements.outroFileInfo.textContent = 'Error al cargar';
+  }
+});
+
+elements.btnRemoveOutro.addEventListener('click', async () => {
+  state.tracks.outro = null;
+  elements.outroUpload.value = '';
+  elements.outroFileInfo.textContent = 'Sin audio de outro seleccionado';
+  elements.btnRemoveOutro.classList.add('hidden');
+  await rebuildCombinedAudioSequence();
+});
+
+// =========================================================================
+// 6. GESTIÓN DEL SISTEMA MULTI-CAPA (IMÁGENES Y TEXTOS)
 // =========================================================================
 function getSelectedLayer() {
   return state.designer.layers.find(l => l.id === state.designer.selectedLayerId) || null;
@@ -247,7 +463,6 @@ function updateLayersUI() {
 
   elements.layersCountBadge.textContent = `${count} ${count === 1 ? 'capa' : 'capas'}`;
 
-  // Mostrar u ocultar mensaje vacío
   if (count === 0) {
     elements.emptyLayersMsg.classList.remove('hidden');
     elements.layerInspector.classList.add('hidden');
@@ -257,7 +472,6 @@ function updateLayersUI() {
 
   elements.emptyLayersMsg.classList.add('hidden');
 
-  // Re-renderizar lista de capas
   elements.layersList.innerHTML = '';
   layers.forEach((layer) => {
     const item = document.createElement('div');
@@ -287,7 +501,6 @@ function updateLayersUI() {
     elements.layersList.appendChild(item);
   });
 
-  // Actualizar Inspector de la capa seleccionada
   const activeLayer = getSelectedLayer();
   if (activeLayer) {
     elements.layerInspector.classList.remove('hidden');
@@ -330,14 +543,13 @@ function deleteLayer(layerId) {
   redrawPreview();
 }
 
-// Botón eliminar capa activa desde el inspector
 elements.btnDeleteSelectedLayer.addEventListener('click', () => {
   if (state.designer.selectedLayerId) {
     deleteLayer(state.designer.selectedLayerId);
   }
 });
 
-// AÑADIR CAPA DE IMAGEN (+ Imagen)
+// AÑADIR CAPA DE IMAGEN
 elements.layerImgUpload.addEventListener('change', (e) => {
   const file = e.target.files[0];
   if (!file) return;
@@ -371,11 +583,11 @@ elements.layerImgUpload.addEventListener('change', (e) => {
   elements.layerImgUpload.value = '';
 });
 
-// AÑADIR CAPA DE TEXTO (+ Texto)
+// AÑADIR CAPA DE TEXTO
 elements.btnAddText.addEventListener('click', () => {
   const textCount = state.designer.layers.filter(l => l.type === 'text').length;
-  const defaultText = textCount === 0 && state.audioFile 
-    ? state.audioFile.name.replace(/\.[^/.]+$/, "") 
+  const defaultText = textCount === 0 && state.tracks.main 
+    ? state.tracks.main.file.name.replace(/\.[^/.]+$/, "") 
     : (textCount === 0 ? 'Mi Canción Oficial' : `@artista_${textCount}`);
 
   const newLayer = {
@@ -400,7 +612,7 @@ elements.btnAddText.addEventListener('click', () => {
   setTimeout(() => elements.canvasDragHint.classList.add('hidden'), 4000);
 });
 
-// INSPECTOR: Modificación de Capa de Imagen
+// Modificaciones de Capa de Imagen
 elements.layerImgShape.addEventListener('change', (e) => {
   const layer = getSelectedLayer();
   if (layer && layer.type === 'image') {
@@ -427,7 +639,7 @@ elements.layerImgOpacity.addEventListener('input', (e) => {
   }
 });
 
-// INSPECTOR: Modificación de Capa de Texto
+// Modificaciones de Capa de Texto
 elements.layerTextContent.addEventListener('input', (e) => {
   const layer = getSelectedLayer();
   if (layer && layer.type === 'text') {
@@ -472,7 +684,7 @@ elements.layerTextOpacity.addEventListener('input', (e) => {
 });
 
 // =========================================================================
-// 6. GESTIÓN DEL FONDO
+// 7. GESTIÓN DEL FONDO
 // =========================================================================
 elements.bgUpload.addEventListener('change', (e) => {
   const file = e.target.files[0];
@@ -518,7 +730,7 @@ elements.bgDim.addEventListener('input', (e) => {
 });
 
 // =========================================================================
-// 7. DETECCIÓN Y ARRASTRE MULTI-CAPA DIRECTO EN CANVAS
+// 8. INTERACCIÓN DIRECTA EN CANVAS (DRAG & DROP)
 // =========================================================================
 function getCanvasCoordinates(e) {
   const rect = elements.canvas.getBoundingClientRect();
@@ -555,7 +767,6 @@ function hitTestLayer(coords, layer) {
 }
 
 function findLayerAtCoordinates(coords) {
-  // Comprobar de arriba hacia abajo (orden inverso)
   for (let i = state.designer.layers.length - 1; i >= 0; i--) {
     if (hitTestLayer(coords, state.designer.layers[i])) {
       return state.designer.layers[i];
@@ -582,7 +793,6 @@ elements.canvas.addEventListener('mousedown', (e) => {
     elements.canvas.classList.add('grabbing');
     elements.canvas.classList.remove('grab');
   } else {
-    // Si hace clic en el fondo vacío, deseleccionar capa
     if (state.designer.selectedLayerId) {
       state.designer.selectedLayerId = null;
       updateLayersUI();
@@ -626,67 +836,8 @@ window.addEventListener('mouseup', () => {
 });
 
 // =========================================================================
-// 8. CARGA DE AUDIO Y PREVISUALIZACIÓN
+// 9. PREVISUALIZACIÓN DE AUDIO
 // =========================================================================
-elements.audioUpload.addEventListener('change', async (event) => {
-  const file = event.target.files[0];
-  if (!file) return;
-
-  state.audioFile = file;
-  elements.fileInfo.textContent = `${file.name} (${(file.size / (1024 * 1024)).toFixed(2)} MB)`;
-  elements.audioElement.src = URL.createObjectURL(file);
-
-  // Si no hay capas de texto, crear automáticamente una capa con el nombre del audio
-  const textLayers = state.designer.layers.filter(l => l.type === 'text');
-  if (textLayers.length === 0) {
-    state.designer.layers.push({
-      id: `layer_txt_title`,
-      type: 'text',
-      name: 'Título Principal',
-      text: file.name.replace(/\.[^/.]+$/, ""),
-      relX: 0.5,
-      relY: 0.88,
-      fontSizeRel: 0.044,
-      color: '#ffffff',
-      fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
-      fontWeight: '700',
-      opacity: 1.0,
-      shadow: true
-    });
-    updateLayersUI();
-  }
-
-  elements.signatureStatusBar.classList.remove('hidden', 'ready');
-  elements.signatureStatusText.textContent = 'Extrayendo firma de onda con Web Audio API (optimizado bajo consumo de RAM)...';
-
-  try {
-    const audioCtx = getOrCreateAudioContext();
-    const t0 = performance.now();
-
-    state.audioBuffer = await decodeAudioFile(file, audioCtx);
-
-    const fps = parseInt(elements.fpsSelect.value, 10) || 30;
-    state.waveformSignature = extractWaveformSignature(state.audioBuffer, fps, 64);
-
-    const elapsedSec = ((performance.now() - t0) / 1000).toFixed(2);
-    const durationFormatted = formatSeconds(state.audioBuffer.duration);
-
-    elements.signatureStatusBar.classList.add('ready');
-    elements.signatureStatusText.innerHTML = `✅ <strong>Firma extraída en ${elapsedSec}s</strong> (${state.waveformSignature.totalFrames} fotogramas para ${durationFormatted} de audio).`;
-
-    elements.btnPlayPause.disabled = false;
-    elements.btnRender.disabled = false;
-    elements.canvasOverlay.classList.add('hidden');
-
-    redrawPreview();
-
-  } catch (err) {
-    console.error('[AudioProcessor] Error:', err);
-    elements.signatureStatusBar.classList.remove('ready');
-    elements.signatureStatusText.textContent = `❌ Error al decodificar audio: ${err.message}`;
-  }
-});
-
 elements.btnPlayPause.addEventListener('click', async () => {
   const audio = elements.audioElement;
   if (!audio.src) return;
@@ -696,16 +847,16 @@ elements.btnPlayPause.addEventListener('click', async () => {
 
   if (audio.paused) {
     audio.play();
-    elements.playIcon.textContent = '⏸ Pausar Vista Previa';
+    elements.playIcon.textContent = '⏸ Pausar Secuencia';
     startRealtimePreviewLoop();
   } else {
     audio.pause();
-    elements.playIcon.textContent = '▶ Reproducir Vista Previa';
+    elements.playIcon.textContent = '▶ Reproducir Secuencia Completa';
   }
 });
 
 elements.audioElement.addEventListener('ended', () => {
-  elements.playIcon.textContent = '▶ Reproducir Vista Previa';
+  elements.playIcon.textContent = '▶ Reproducir Secuencia Completa';
 });
 
 function startRealtimePreviewLoop() {
@@ -731,17 +882,17 @@ function startRealtimePreviewLoop() {
 }
 
 // =========================================================================
-// 9. MOTOR DE GENERACIÓN DE VIDEO
+// 10. MOTOR DE GENERACIÓN DE VIDEO
 // =========================================================================
 elements.btnRender.addEventListener('click', async () => {
   if (!state.audioBuffer || !state.waveformSignature) {
-    alert('Primero debes cargar un archivo de audio.');
+    alert('Primero debes cargar la pista de audio principal.');
     return;
   }
 
   if (!elements.audioElement.paused) {
     elements.audioElement.pause();
-    elements.playIcon.textContent = '▶ Reproducir Vista Previa';
+    elements.playIcon.textContent = '▶ Reproducir Secuencia Completa';
   }
 
   const [width, height] = elements.resolutionSelect.value.split('x').map(Number);
@@ -758,7 +909,7 @@ elements.btnRender.addEventListener('click', async () => {
   let fileWritableStream = null;
   if (useDirectDisk && mode === 'webcodecs') {
     try {
-      const suggestedName = `soundwave-${(state.audioFile?.name || 'video').replace(/\.[^/.]+$/, "")}-${Date.now()}.${format}`;
+      const suggestedName = `soundwave-video-${Date.now()}.${format}`;
       const handle = await window.showSaveFilePicker({
         suggestedName,
         types: [{
@@ -811,7 +962,7 @@ elements.btnRender.addEventListener('click', async () => {
       height,
       fps,
       bitrate: 5_000_000,
-      styleOptions: getRenderOptions(true), // isExporting: true (sin cajas de selección)
+      styleOptions: getRenderOptions(true), // isExporting: true
       fileWritableStream,
       signal: state.abortController.signal,
       onProgress: (stats) => {
@@ -848,11 +999,11 @@ elements.btnRender.addEventListener('click', async () => {
     elements.statEta.textContent = '00:00';
 
     if (result.directToDisk) {
-      elements.resultMessage.textContent = '🎉 ¡El video se ha guardado directamente en tu disco sin agotar la memoria RAM!';
+      elements.resultMessage.textContent = '🎉 ¡El video con Intro/Canción/Outro se ha guardado en tu disco sin agotar la memoria RAM!';
       elements.resultArea.classList.remove('hidden');
       elements.videoPreviewPlayer.classList.add('hidden');
     } else if (result.blob) {
-      elements.resultMessage.textContent = '🎉 ¡Video generado con éxito!';
+      elements.resultMessage.textContent = '🎉 ¡Video con secuencia de audio completa generado con éxito!';
       const videoUrl = URL.createObjectURL(result.blob);
       elements.videoPreviewPlayer.src = videoUrl;
       elements.videoPreviewPlayer.classList.remove('hidden');
