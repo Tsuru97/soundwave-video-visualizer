@@ -1,9 +1,9 @@
-// Soundwave Video Visualizer - Client-Side Engine & Visual Designer
+// Soundwave Video Visualizer - Client-Side Engine & Multi-Layer Designer
 import { decodeAudioFile, extractWaveformSignature } from './audioProcessor.js';
 import { renderFrame } from './videoRenderer.js';
 import { generateVideo, isWebCodecsSupported, isFileSystemAccessSupported } from './exportEngine.js';
 
-console.log('[Soundwave] Inicializando Soundwave Engine con Diseñador Visual...');
+console.log('[Soundwave] Inicializando Sistema Multi-Capa y Diseñador Visual...');
 
 // Estado global de la aplicación
 const state = {
@@ -15,23 +15,16 @@ const state = {
   audioContext: null,
   animationFrameId: null,
 
-  // Estado del Diseñador Visual
+  // Estado del Diseñador Visual Multi-Capa
   designer: {
     background: {
       image: null,
       blur: 10,
       dim: 0.45
     },
-    overlay: {
-      image: null,
-      relX: 0.5,
-      relY: 0.35,
-      relSize: 0.28,
-      shape: 'rounded', // 'rounded' | 'circle'
-      opacity: 1.0,
-      shadow: true
-    },
-    isDraggingOverlay: false,
+    layers: [],              // Array de capas (imágenes y textos)
+    selectedLayerId: null,   // ID de la capa activa
+    isDraggingLayer: false,  // Indicador de arrastre en curso
     dragOffset: { x: 0, y: 0 }
   }
 };
@@ -70,21 +63,40 @@ const elements = {
   bgDim: document.getElementById('bg-dim'),
   valBgDim: document.getElementById('val-bg-dim'),
 
-  // Diseñador: Portada / Logo
-  overlayUpload: document.getElementById('overlay-upload'),
-  btnRemoveOverlay: document.getElementById('btn-remove-overlay'),
-  overlayShape: document.getElementById('overlay-shape'),
-  overlaySize: document.getElementById('overlay-size'),
-  valOverlaySize: document.getElementById('val-overlay-size'),
-  overlayOpacity: document.getElementById('overlay-opacity'),
-  valOverlayOpacity: document.getElementById('val-overlay-opacity'),
+  // Diseñador: Gestión de Capas
+  layersCountBadge: document.getElementById('layers-count-badge'),
+  layerImgUpload: document.getElementById('layer-img-upload'),
+  btnAddText: document.getElementById('btn-add-text'),
+  layersList: document.getElementById('layers-list'),
+  emptyLayersMsg: document.getElementById('empty-layers-msg'),
 
-  // Onda Sonora y Textos
+  // Inspector de Capa
+  layerInspector: document.getElementById('layer-inspector'),
+  inspectorTitle: document.getElementById('inspector-title'),
+  btnDeleteSelectedLayer: document.getElementById('btn-delete-selected-layer'),
+  inspectorImageFields: document.getElementById('inspector-image-fields'),
+  inspectorTextFields: document.getElementById('inspector-text-fields'),
+
+  // Propiedades de Imagen
+  layerImgShape: document.getElementById('layer-img-shape'),
+  layerImgSize: document.getElementById('layer-img-size'),
+  valLayerImgSize: document.getElementById('val-layer-img-size'),
+  layerImgOpacity: document.getElementById('layer-img-opacity'),
+  valLayerImgOpacity: document.getElementById('val-layer-img-opacity'),
+
+  // Propiedades de Texto
+  layerTextContent: document.getElementById('layer-text-content'),
+  layerTextColor: document.getElementById('layer-text-color'),
+  layerTextFont: document.getElementById('layer-text-font'),
+  layerTextSize: document.getElementById('layer-text-size'),
+  valLayerTextSize: document.getElementById('val-layer-text-size'),
+  layerTextOpacity: document.getElementById('layer-text-opacity'),
+  valLayerTextOpacity: document.getElementById('val-layer-text-opacity'),
+
+  // Onda Sonora
   visualizerTypeSelect: document.getElementById('visualizer-type'),
   colorAccentInput: document.getElementById('color-accent'),
   colorSecondaryInput: document.getElementById('color-secondary'),
-  videoTitleInput: document.getElementById('video-title'),
-  videoSubtitleInput: document.getElementById('video-subtitle'),
 
   // Exportación
   exportEngineSelect: document.getElementById('export-engine-select'),
@@ -118,7 +130,7 @@ const elements = {
 const ctx = elements.canvas.getContext('2d');
 
 // =========================================================================
-// 1. GESTIÓN DE PESTAÑAS DEL PANEL LATERAL
+// 1. PESTAÑAS DEL PANEL LATERAL
 // =========================================================================
 elements.tabBtns.forEach(btn => {
   btn.addEventListener('click', () => {
@@ -182,35 +194,26 @@ function getOrCreateAudioContext() {
 }
 
 // =========================================================================
-// 4. FUNCIONES DE DIBUJO Y DISEÑADOR
+// 4. FUNCIONES DE RENDERIZADO
 // =========================================================================
-function getRenderOptions(isSelected = false) {
+function getRenderOptions(isExporting = false) {
   return {
     style: elements.visualizerTypeSelect.value,
     accentColor: elements.colorAccentInput.value,
     secondaryColor: elements.colorSecondaryInput.value,
-    title: elements.videoTitleInput.value || '',
-    subtitle: elements.videoSubtitleInput.value || (state.audioFile?.name || ''),
     background: {
       image: state.designer.background.image,
       blur: state.designer.background.blur,
       dim: state.designer.background.dim
     },
-    overlay: state.designer.overlay.image ? {
-      image: state.designer.overlay.image,
-      relX: state.designer.overlay.relX,
-      relY: state.designer.overlay.relY,
-      relSize: state.designer.overlay.relSize,
-      shape: state.designer.overlay.shape,
-      opacity: state.designer.overlay.opacity,
-      shadow: state.designer.overlay.shadow
-    } : null,
-    isSelectedOverlay: isSelected
+    layers: state.designer.layers,
+    selectedLayerId: state.designer.selectedLayerId,
+    isExporting
   };
 }
 
-function drawCurrentFrame(frameData, isSelected = false) {
-  renderFrame(ctx, elements.canvas.width, elements.canvas.height, frameData, getRenderOptions(isSelected));
+function drawCurrentFrame(frameData, isExporting = false) {
+  renderFrame(ctx, elements.canvas.width, elements.canvas.height, frameData, getRenderOptions(isExporting));
 }
 
 function redrawPreview() {
@@ -219,61 +222,257 @@ function redrawPreview() {
     const fps = state.waveformSignature.fps || 30;
     const frameIndex = Math.floor(currentTime * fps);
     const frame = state.waveformSignature.getFrame(frameIndex);
-    drawCurrentFrame(frame, !!state.designer.overlay.image);
+    drawCurrentFrame(frame, false);
   } else {
-    // Dibujar lienzo en reposo
-    drawCurrentFrame(null, !!state.designer.overlay.image);
+    drawCurrentFrame(null, false);
   }
 }
 
 // =========================================================================
-// 5. CARGA DE ARCHIVO DE AUDIO
+// 5. GESTIÓN DEL SISTEMA MULTI-CAPA
 // =========================================================================
-elements.audioUpload.addEventListener('change', async (event) => {
-  const file = event.target.files[0];
-  if (!file) return;
+function getSelectedLayer() {
+  return state.designer.layers.find(l => l.id === state.designer.selectedLayerId) || null;
+}
 
-  state.audioFile = file;
-  elements.fileInfo.textContent = `${file.name} (${(file.size / (1024 * 1024)).toFixed(2)} MB)`;
-  elements.audioElement.src = URL.createObjectURL(file);
+function selectLayer(layerId) {
+  state.designer.selectedLayerId = layerId;
+  updateLayersUI();
+  redrawPreview();
+}
 
-  if (!elements.videoTitleInput.value) {
-    elements.videoTitleInput.value = file.name.replace(/\.[^/.]+$/, "");
+function updateLayersUI() {
+  const layers = state.designer.layers;
+  const count = layers.length;
+
+  elements.layersCountBadge.textContent = `${count} ${count === 1 ? 'capa' : 'capas'}`;
+
+  // Mostrar u ocultar mensaje vacío
+  if (count === 0) {
+    elements.emptyLayersMsg.classList.remove('hidden');
+    elements.layerInspector.classList.add('hidden');
+    elements.canvasDragHint.classList.add('hidden');
+    return;
   }
 
-  elements.signatureStatusBar.classList.remove('hidden', 'ready');
-  elements.signatureStatusText.textContent = 'Extrayendo firma de onda con Web Audio API (optimizado bajo consumo de RAM)...';
+  elements.emptyLayersMsg.classList.add('hidden');
 
-  try {
-    const audioCtx = getOrCreateAudioContext();
-    const t0 = performance.now();
+  // Re-renderizar lista de capas
+  elements.layersList.innerHTML = '';
+  layers.forEach((layer) => {
+    const item = document.createElement('div');
+    item.className = `layer-item ${layer.id === state.designer.selectedLayerId ? 'active' : ''}`;
 
-    state.audioBuffer = await decodeAudioFile(file, audioCtx);
+    const icon = layer.type === 'image' ? '🖼️' : '🔤';
+    const label = layer.type === 'text' ? `"${layer.text}"` : (layer.name || 'Imagen');
 
-    const fps = parseInt(elements.fpsSelect.value, 10) || 30;
-    state.waveformSignature = extractWaveformSignature(state.audioBuffer, fps, 64);
+    item.innerHTML = `
+      <div class="layer-item-info">
+        <span class="layer-type-icon">${icon}</span>
+        <span class="layer-name" title="${label}">${label}</span>
+      </div>
+      <button class="btn-delete-layer" title="Eliminar capa" data-id="${layer.id}">✕</button>
+    `;
 
-    const elapsedSec = ((performance.now() - t0) / 1000).toFixed(2);
-    const durationFormatted = formatSeconds(state.audioBuffer.duration);
+    item.addEventListener('click', (e) => {
+      if (e.target.classList.contains('btn-delete-layer')) return;
+      selectLayer(layer.id);
+    });
 
-    elements.signatureStatusBar.classList.add('ready');
-    elements.signatureStatusText.innerHTML = `✅ <strong>Firma extraída en ${elapsedSec}s</strong> (${state.waveformSignature.totalFrames} fotogramas para ${durationFormatted} de audio - Buffer: ${(state.waveformSignature.flatBuffer.byteLength / (1024 * 1024)).toFixed(1)} MB).`;
+    item.querySelector('.btn-delete-layer').addEventListener('click', (e) => {
+      e.stopPropagation();
+      deleteLayer(layer.id);
+    });
 
-    elements.btnPlayPause.disabled = false;
-    elements.btnRender.disabled = false;
-    elements.canvasOverlay.classList.add('hidden');
+    elements.layersList.appendChild(item);
+  });
 
+  // Actualizar Inspector de la capa seleccionada
+  const activeLayer = getSelectedLayer();
+  if (activeLayer) {
+    elements.layerInspector.classList.remove('hidden');
+
+    if (activeLayer.type === 'image') {
+      elements.inspectorTitle.textContent = `🖼️ Imagen: ${activeLayer.name}`;
+      elements.inspectorImageFields.classList.remove('hidden');
+      elements.inspectorTextFields.classList.add('hidden');
+
+      elements.layerImgShape.value = activeLayer.shape || 'rounded';
+      elements.layerImgSize.value = Math.round((activeLayer.relSize || 0.28) * 100);
+      elements.valLayerImgSize.textContent = `${elements.layerImgSize.value}%`;
+      elements.layerImgOpacity.value = Math.round((activeLayer.opacity !== undefined ? activeLayer.opacity : 1.0) * 100);
+      elements.valLayerImgOpacity.textContent = `${elements.layerImgOpacity.value}%`;
+
+    } else if (activeLayer.type === 'text') {
+      elements.inspectorTitle.textContent = '🔤 Capa de Texto';
+      elements.inspectorImageFields.classList.add('hidden');
+      elements.inspectorTextFields.classList.remove('hidden');
+
+      elements.layerTextContent.value = activeLayer.text || '';
+      elements.layerTextColor.value = activeLayer.color || '#ffffff';
+      elements.layerTextFont.value = activeLayer.fontFamily || "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
+      elements.layerTextSize.value = Math.round((activeLayer.fontSizeRel || 0.042) * 1000);
+      elements.valLayerTextSize.textContent = `${(elements.layerTextSize.value / 10).toFixed(1)}%`;
+      elements.layerTextOpacity.value = Math.round((activeLayer.opacity !== undefined ? activeLayer.opacity : 1.0) * 100);
+      elements.valLayerTextOpacity.textContent = `${elements.layerTextOpacity.value}%`;
+    }
+  } else {
+    elements.layerInspector.classList.add('hidden');
+  }
+}
+
+function deleteLayer(layerId) {
+  state.designer.layers = state.designer.layers.filter(l => l.id !== layerId);
+  if (state.designer.selectedLayerId === layerId) {
+    state.designer.selectedLayerId = state.designer.layers.length > 0 ? state.designer.layers[state.designer.layers.length - 1].id : null;
+  }
+  updateLayersUI();
+  redrawPreview();
+}
+
+// Botón eliminar capa activa desde el inspector
+elements.btnDeleteSelectedLayer.addEventListener('click', () => {
+  if (state.designer.selectedLayerId) {
+    deleteLayer(state.designer.selectedLayerId);
+  }
+});
+
+// AÑADIR CAPA DE IMAGEN (+ Imagen)
+elements.layerImgUpload.addEventListener('change', (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+
+  const reader = new FileReader();
+  reader.onload = (event) => {
+    const img = new Image();
+    img.onload = () => {
+      const isFirst = state.designer.layers.filter(l => l.type === 'image').length === 0;
+      const newLayer = {
+        id: `layer_img_${Date.now()}`,
+        type: 'image',
+        name: file.name.replace(/\.[^/.]+$/, "").substring(0, 18),
+        image: img,
+        relX: isFirst ? 0.5 : 0.2 + (Math.random() * 0.6),
+        relY: isFirst ? 0.35 : 0.2 + (Math.random() * 0.3),
+        relSize: 0.28,
+        shape: 'rounded',
+        opacity: 1.0,
+        shadow: true
+      };
+      state.designer.layers.push(newLayer);
+      selectLayer(newLayer.id);
+
+      elements.canvasDragHint.classList.remove('hidden');
+      setTimeout(() => elements.canvasDragHint.classList.add('hidden'), 4000);
+    };
+    img.src = event.target.result;
+  };
+  reader.readAsDataURL(file);
+  elements.layerImgUpload.value = '';
+});
+
+// AÑADIR CAPA DE TEXTO (+ Texto)
+elements.btnAddText.addEventListener('click', () => {
+  const textCount = state.designer.layers.filter(l => l.type === 'text').length;
+  const defaultText = textCount === 0 && state.audioFile 
+    ? state.audioFile.name.replace(/\.[^/.]+$/, "") 
+    : (textCount === 0 ? 'Mi Canción Oficial' : `@artista_${textCount}`);
+
+  const newLayer = {
+    id: `layer_txt_${Date.now()}`,
+    type: 'text',
+    name: `Texto ${textCount + 1}`,
+    text: defaultText,
+    relX: 0.5,
+    relY: textCount === 0 ? 0.88 : 0.94,
+    fontSizeRel: textCount === 0 ? 0.044 : 0.028,
+    color: textCount === 0 ? '#ffffff' : '#06b6d4',
+    fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
+    fontWeight: textCount === 0 ? '700' : '500',
+    opacity: 1.0,
+    shadow: true
+  };
+
+  state.designer.layers.push(newLayer);
+  selectLayer(newLayer.id);
+
+  elements.canvasDragHint.classList.remove('hidden');
+  setTimeout(() => elements.canvasDragHint.classList.add('hidden'), 4000);
+});
+
+// INSPECTOR: Modificación de Capa de Imagen
+elements.layerImgShape.addEventListener('change', (e) => {
+  const layer = getSelectedLayer();
+  if (layer && layer.type === 'image') {
+    layer.shape = e.target.value;
     redrawPreview();
+  }
+});
 
-  } catch (err) {
-    console.error('[AudioProcessor] Error:', err);
-    elements.signatureStatusBar.classList.remove('ready');
-    elements.signatureStatusText.textContent = `❌ Error al decodificar audio: ${err.message}`;
+elements.layerImgSize.addEventListener('input', (e) => {
+  const layer = getSelectedLayer();
+  if (layer && layer.type === 'image') {
+    layer.relSize = parseInt(e.target.value, 10) / 100;
+    elements.valLayerImgSize.textContent = `${e.target.value}%`;
+    redrawPreview();
+  }
+});
+
+elements.layerImgOpacity.addEventListener('input', (e) => {
+  const layer = getSelectedLayer();
+  if (layer && layer.type === 'image') {
+    layer.opacity = parseInt(e.target.value, 10) / 100;
+    elements.valLayerImgOpacity.textContent = `${e.target.value}%`;
+    redrawPreview();
+  }
+});
+
+// INSPECTOR: Modificación de Capa de Texto
+elements.layerTextContent.addEventListener('input', (e) => {
+  const layer = getSelectedLayer();
+  if (layer && layer.type === 'text') {
+    layer.text = e.target.value;
+    updateLayersUI();
+    redrawPreview();
+  }
+});
+
+elements.layerTextColor.addEventListener('input', (e) => {
+  const layer = getSelectedLayer();
+  if (layer && layer.type === 'text') {
+    layer.color = e.target.value;
+    redrawPreview();
+  }
+});
+
+elements.layerTextFont.addEventListener('change', (e) => {
+  const layer = getSelectedLayer();
+  if (layer && layer.type === 'text') {
+    layer.fontFamily = e.target.value;
+    redrawPreview();
+  }
+});
+
+elements.layerTextSize.addEventListener('input', (e) => {
+  const layer = getSelectedLayer();
+  if (layer && layer.type === 'text') {
+    layer.fontSizeRel = parseInt(e.target.value, 10) / 1000;
+    elements.valLayerTextSize.textContent = `${(parseInt(e.target.value, 10) / 10).toFixed(1)}%`;
+    redrawPreview();
+  }
+});
+
+elements.layerTextOpacity.addEventListener('input', (e) => {
+  const layer = getSelectedLayer();
+  if (layer && layer.type === 'text') {
+    layer.opacity = parseInt(e.target.value, 10) / 100;
+    elements.valLayerTextOpacity.textContent = `${e.target.value}%`;
+    redrawPreview();
   }
 });
 
 // =========================================================================
-// 6. GESTIÓN DEL FONDO (DISEÑADOR)
+// 6. GESTIÓN DEL FONDO
 // =========================================================================
 elements.bgUpload.addEventListener('change', (e) => {
   const file = e.target.files[0];
@@ -311,62 +510,15 @@ elements.bgDim.addEventListener('input', (e) => {
   redrawPreview();
 });
 
-// =========================================================================
-// 7. GESTIÓN DE PORTADA / LOGO (DISEÑADOR)
-// =========================================================================
-elements.overlayUpload.addEventListener('change', (e) => {
-  const file = e.target.files[0];
-  if (!file) return;
-
-  const reader = new FileReader();
-  reader.onload = (event) => {
-    const img = new Image();
-    img.onload = () => {
-      state.designer.overlay.image = img;
-      elements.btnRemoveOverlay.classList.remove('hidden');
-      elements.canvasDragHint.classList.remove('hidden');
-      setTimeout(() => elements.canvasDragHint.classList.add('hidden'), 4000);
-      redrawPreview();
-    };
-    img.src = event.target.result;
-  };
-  reader.readAsDataURL(file);
-});
-
-elements.btnRemoveOverlay.addEventListener('click', () => {
-  state.designer.overlay.image = null;
-  elements.overlayUpload.value = '';
-  elements.btnRemoveOverlay.classList.add('hidden');
-  elements.canvasDragHint.classList.add('hidden');
-  redrawPreview();
-});
-
-elements.overlayShape.addEventListener('change', (e) => {
-  state.designer.overlay.shape = e.target.value;
-  redrawPreview();
-});
-
-elements.overlaySize.addEventListener('input', (e) => {
-  state.designer.overlay.relSize = parseInt(e.target.value, 10) / 100;
-  elements.valOverlaySize.textContent = `${e.target.value}%`;
-  redrawPreview();
-});
-
-elements.overlayOpacity.addEventListener('input', (e) => {
-  state.designer.overlay.opacity = parseInt(e.target.value, 10) / 100;
-  elements.valOverlayOpacity.textContent = `${e.target.value}%`;
-  redrawPreview();
-});
-
-// Reactividad de colores y textos
-[elements.visualizerTypeSelect, elements.colorAccentInput, elements.colorSecondaryInput, elements.videoTitleInput, elements.videoSubtitleInput].forEach(input => {
+// Estilos de onda sonora
+[elements.visualizerTypeSelect, elements.colorAccentInput, elements.colorSecondaryInput].forEach(input => {
   input.addEventListener('input', () => {
     redrawPreview();
   });
 });
 
 // =========================================================================
-// 8. INTERACCIÓN DIRECTA EN CANVAS (DRAG & DROP DE PORTADA)
+// 7. DETECCIÓN Y ARRASTRE MULTI-CAPA DIRECTO EN CANVAS
 // =========================================================================
 function getCanvasCoordinates(e) {
   const rect = elements.canvas.getBoundingClientRect();
@@ -378,55 +530,86 @@ function getCanvasCoordinates(e) {
   };
 }
 
-function isPointOverOverlay(coords) {
-  if (!state.designer.overlay.image) return false;
+function hitTestLayer(coords, layer) {
   const w = elements.canvas.width;
   const h = elements.canvas.height;
-  const size = Math.min(w, h) * state.designer.overlay.relSize;
-  const ox = w * state.designer.overlay.relX - size / 2;
-  const oy = h * state.designer.overlay.relY - size / 2;
-  return (
-    coords.x >= ox &&
-    coords.x <= ox + size &&
-    coords.y >= oy &&
-    coords.y <= oy + size
-  );
+
+  if (layer.type === 'image') {
+    const size = Math.min(w, h) * (layer.relSize || 0.28);
+    const ox = w * (layer.relX ?? 0.5) - size / 2;
+    const oy = h * (layer.relY ?? 0.35) - size / 2;
+    return coords.x >= ox && coords.x <= ox + size && coords.y >= oy && coords.y <= oy + size;
+  } else if (layer.type === 'text') {
+    const fontSize = Math.max(12, Math.floor(h * (layer.fontSizeRel || 0.042)));
+    ctx.font = `${layer.fontWeight || '700'} ${fontSize}px ${layer.fontFamily || 'sans-serif'}`;
+    const metrics = ctx.measureText(layer.text);
+    const textW = metrics.width;
+    const textH = fontSize * 1.3;
+    const posX = w * (layer.relX ?? 0.5);
+    const posY = h * (layer.relY ?? 0.88);
+    const boxX = posX - textW / 2 - 12;
+    const boxY = posY - textH / 2 - 8;
+    return coords.x >= boxX && coords.x <= boxX + textW + 24 && coords.y >= boxY && coords.y <= boxY + textH + 16;
+  }
+  return false;
+}
+
+function findLayerAtCoordinates(coords) {
+  // Comprobar de arriba hacia abajo (orden inverso)
+  for (let i = state.designer.layers.length - 1; i >= 0; i--) {
+    if (hitTestLayer(coords, state.designer.layers[i])) {
+      return state.designer.layers[i];
+    }
+  }
+  return null;
 }
 
 elements.canvas.addEventListener('mousedown', (e) => {
-  if (!state.designer.overlay.image) return;
   const coords = getCanvasCoordinates(e);
+  const clickedLayer = findLayerAtCoordinates(coords);
 
-  if (isPointOverOverlay(coords)) {
-    state.designer.isDraggingOverlay = true;
+  if (clickedLayer) {
+    selectLayer(clickedLayer.id);
+    state.designer.isDraggingLayer = true;
+
     const w = elements.canvas.width;
     const h = elements.canvas.height;
     state.designer.dragOffset = {
-      x: coords.x - (w * state.designer.overlay.relX),
-      y: coords.y - (h * state.designer.overlay.relY)
+      x: coords.x - (w * (clickedLayer.relX ?? 0.5)),
+      y: coords.y - (h * (clickedLayer.relY ?? 0.5))
     };
+
     elements.canvas.classList.add('grabbing');
     elements.canvas.classList.remove('grab');
-    redrawPreview();
+  } else {
+    // Si hace clic en el fondo vacío, deseleccionar capa
+    if (state.designer.selectedLayerId) {
+      state.designer.selectedLayerId = null;
+      updateLayersUI();
+      redrawPreview();
+    }
   }
 });
 
 window.addEventListener('mousemove', (e) => {
   const coords = getCanvasCoordinates(e);
 
-  if (state.designer.isDraggingOverlay) {
+  if (state.designer.isDraggingLayer) {
+    const activeLayer = getSelectedLayer();
+    if (!activeLayer) return;
+
     const w = elements.canvas.width;
     const h = elements.canvas.height;
     const newX = (coords.x - state.designer.dragOffset.x) / w;
     const newY = (coords.y - state.designer.dragOffset.y) / h;
 
-    // Limitar dentro del lienzo con márgenes de seguridad
-    state.designer.overlay.relX = Math.max(0.05, Math.min(0.95, newX));
-    state.designer.overlay.relY = Math.max(0.05, Math.min(0.95, newY));
+    activeLayer.relX = Math.max(0.04, Math.min(0.96, newX));
+    activeLayer.relY = Math.max(0.04, Math.min(0.96, newY));
 
     redrawPreview();
-  } else if (state.designer.overlay.image) {
-    if (isPointOverOverlay(coords)) {
+  } else {
+    const hoveredLayer = findLayerAtCoordinates(coords);
+    if (hoveredLayer) {
       elements.canvas.classList.add('grab');
     } else {
       elements.canvas.classList.remove('grab');
@@ -435,16 +618,75 @@ window.addEventListener('mousemove', (e) => {
 });
 
 window.addEventListener('mouseup', () => {
-  if (state.designer.isDraggingOverlay) {
-    state.designer.isDraggingOverlay = false;
+  if (state.designer.isDraggingLayer) {
+    state.designer.isDraggingLayer = false;
     elements.canvas.classList.remove('grabbing');
     redrawPreview();
   }
 });
 
 // =========================================================================
-// 9. PREVISUALIZACIÓN DE AUDIO
+// 8. CARGA DE AUDIO Y PREVISUALIZACIÓN
 // =========================================================================
+elements.audioUpload.addEventListener('change', async (event) => {
+  const file = event.target.files[0];
+  if (!file) return;
+
+  state.audioFile = file;
+  elements.fileInfo.textContent = `${file.name} (${(file.size / (1024 * 1024)).toFixed(2)} MB)`;
+  elements.audioElement.src = URL.createObjectURL(file);
+
+  // Si no hay capas de texto, crear automáticamente una capa con el nombre del audio
+  const textLayers = state.designer.layers.filter(l => l.type === 'text');
+  if (textLayers.length === 0) {
+    state.designer.layers.push({
+      id: `layer_txt_title`,
+      type: 'text',
+      name: 'Título Principal',
+      text: file.name.replace(/\.[^/.]+$/, ""),
+      relX: 0.5,
+      relY: 0.88,
+      fontSizeRel: 0.044,
+      color: '#ffffff',
+      fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
+      fontWeight: '700',
+      opacity: 1.0,
+      shadow: true
+    });
+    updateLayersUI();
+  }
+
+  elements.signatureStatusBar.classList.remove('hidden', 'ready');
+  elements.signatureStatusText.textContent = 'Extrayendo firma de onda con Web Audio API (optimizado bajo consumo de RAM)...';
+
+  try {
+    const audioCtx = getOrCreateAudioContext();
+    const t0 = performance.now();
+
+    state.audioBuffer = await decodeAudioFile(file, audioCtx);
+
+    const fps = parseInt(elements.fpsSelect.value, 10) || 30;
+    state.waveformSignature = extractWaveformSignature(state.audioBuffer, fps, 64);
+
+    const elapsedSec = ((performance.now() - t0) / 1000).toFixed(2);
+    const durationFormatted = formatSeconds(state.audioBuffer.duration);
+
+    elements.signatureStatusBar.classList.add('ready');
+    elements.signatureStatusText.innerHTML = `✅ <strong>Firma extraída en ${elapsedSec}s</strong> (${state.waveformSignature.totalFrames} fotogramas para ${durationFormatted} de audio).`;
+
+    elements.btnPlayPause.disabled = false;
+    elements.btnRender.disabled = false;
+    elements.canvasOverlay.classList.add('hidden');
+
+    redrawPreview();
+
+  } catch (err) {
+    console.error('[AudioProcessor] Error:', err);
+    elements.signatureStatusBar.classList.remove('ready');
+    elements.signatureStatusText.textContent = `❌ Error al decodificar audio: ${err.message}`;
+  }
+});
+
 elements.btnPlayPause.addEventListener('click', async () => {
   const audio = elements.audioElement;
   if (!audio.src) return;
@@ -479,7 +721,7 @@ function startRealtimePreviewLoop() {
       );
 
       const frameData = state.waveformSignature.getFrame(frameIndex);
-      drawCurrentFrame(frameData, !!state.designer.overlay.image && !elements.audioElement.paused ? false : true);
+      drawCurrentFrame(frameData, false);
 
       state.animationFrameId = requestAnimationFrame(loop);
     }
@@ -489,7 +731,7 @@ function startRealtimePreviewLoop() {
 }
 
 // =========================================================================
-// 10. MOTOR DE GENERACIÓN DE VIDEO
+// 9. MOTOR DE GENERACIÓN DE VIDEO
 // =========================================================================
 elements.btnRender.addEventListener('click', async () => {
   if (!state.audioBuffer || !state.waveformSignature) {
@@ -527,10 +769,10 @@ elements.btnRender.addEventListener('click', async () => {
       fileWritableStream = await handle.createWritable();
     } catch (pickerErr) {
       if (pickerErr.name === 'AbortError') {
-        console.info('[ExportEngine] Selección cancelada por el usuario.');
+        console.info('[ExportEngine] Guardado cancelado.');
         return;
       }
-      console.warn('[ExportEngine] Usando memoria:', pickerErr);
+      console.warn('[ExportEngine] Usando buffer:', pickerErr);
     }
   }
 
@@ -569,7 +811,7 @@ elements.btnRender.addEventListener('click', async () => {
       height,
       fps,
       bitrate: 5_000_000,
-      styleOptions: getRenderOptions(false), // Sin guías de selección en el video exportado
+      styleOptions: getRenderOptions(true), // isExporting: true (sin cajas de selección)
       fileWritableStream,
       signal: state.abortController.signal,
       onProgress: (stats) => {
@@ -670,4 +912,5 @@ function formatSeconds(sec) {
 
 document.addEventListener('DOMContentLoaded', () => {
   checkCapabilities();
+  updateLayersUI();
 });

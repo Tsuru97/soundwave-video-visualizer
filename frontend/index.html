@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Soundwave Video Visualizer - Client-Side Generator & Designer</title>
+    <title>Soundwave Video Visualizer - Multi-Layer Canvas Designer</title>
     <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%236366f1'><path d='M12 3v18M8 6v12M4 9v6M16 6v12M20 9v6'/></svg>" />
     <link rel="stylesheet" href="./src/style.css" />
   </head>
@@ -16,7 +16,7 @@
           </div>
           <div>
             <h1>Soundwave Video Visualizer</h1>
-            <p class="subtitle">Generador y Diseñador Visual Client-Side</p>
+            <p class="subtitle">Generador y Diseñador Multi-Capa Client-Side</p>
           </div>
         </div>
         <div class="status-badge" id="isolation-status">
@@ -42,7 +42,7 @@
           </div>
         </section>
 
-        <!-- Visualizador Principal y Diseñador -->
+        <!-- Visualizador Principal y Diseñador Multi-Capa -->
         <section class="visualizer-grid">
           <div class="card visualizer-card">
             <div class="canvas-wrapper" id="canvas-container">
@@ -53,11 +53,11 @@
                   <circle cx="6" cy="18" r="3"></circle>
                   <circle cx="18" cy="16" r="3"></circle>
                 </svg>
-                <p>Carga un archivo de audio para comenzar el diseño</p>
+                <p>Carga un archivo de audio para comenzar tu composición</p>
               </div>
               <!-- Hint flotante de arrastre -->
               <div class="canvas-hint hidden" id="canvas-drag-hint">
-                <span>🖱️ Haz clic y arrastra la portada para reposicionarla</span>
+                <span>🖱️ Arrastra cualquier elemento en el lienzo para reposicionarlo</span>
               </div>
             </div>
 
@@ -93,18 +93,18 @@
           <aside class="card settings-card">
             <!-- Pestañas de Navegación -->
             <div class="tabs-nav">
-              <button class="tab-btn active" data-tab="tab-designer">🎨 Diseñador</button>
-              <button class="tab-btn" data-tab="tab-wave">🎵 Onda</button>
+              <button class="tab-btn active" data-tab="tab-designer">🎨 Capas y Fondo</button>
+              <button class="tab-btn" data-tab="tab-wave">🎵 Onda Sonora</button>
               <button class="tab-btn" data-tab="tab-export">⚙️ Exportar</button>
             </div>
 
-            <!-- TAB 1: DISEÑADOR VISUAL (FONDO Y PORTADA) -->
+            <!-- TAB 1: DISEÑADOR VISUAL MULTI-CAPA -->
             <div class="tab-content active" id="tab-designer">
-              <!-- Sección Imagen de Fondo -->
+              <!-- Sección Fondo del Video -->
               <div class="designer-section">
                 <div class="section-title-row">
-                  <h4>🌄 Fondo del Video</h4>
-                  <button class="btn-link hidden" id="btn-remove-bg">Quitar Fondo</button>
+                  <h4>🌄 Fondo</h4>
+                  <button class="btn-link hidden" id="btn-remove-bg">Quitar</button>
                 </div>
 
                 <label class="btn btn-secondary full-width btn-sm" for="bg-upload">
@@ -113,7 +113,7 @@
                     <circle cx="8.5" cy="8.5" r="1.5"></circle>
                     <polyline points="21 15 16 10 5 21"></polyline>
                   </svg>
-                  Subir Imagen de Fondo
+                  Cargar Imagen de Fondo
                 </label>
                 <input type="file" id="bg-upload" accept="image/*" style="display: none;" />
 
@@ -129,50 +129,107 @@
                 </div>
               </div>
 
-              <!-- Sección Capa Superpuesta (Portada / Logo) -->
+              <!-- Sección Añadir Capas (Imágenes o Textos) -->
               <div class="designer-section">
                 <div class="section-title-row">
-                  <h4>💿 Portada / Logotipo</h4>
-                  <button class="btn-link hidden" id="btn-remove-overlay">Quitar Portada</button>
+                  <h4>✨ Capas del Video</h4>
+                  <span class="layers-count-badge" id="layers-count-badge">0 capas</span>
                 </div>
 
-                <label class="btn btn-secondary full-width btn-sm" for="overlay-upload">
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <circle cx="12" cy="12" r="10"></circle>
-                    <polygon points="10 8 16 12 10 16 10 8"></polygon>
-                  </svg>
-                  Subir Portada o Logo
-                </label>
-                <input type="file" id="overlay-upload" accept="image/*" style="display: none;" />
+                <div class="add-layers-toolbar">
+                  <label class="btn btn-secondary flex-1 btn-sm" for="layer-img-upload">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+                      <circle cx="8.5" cy="8.5" r="1.5"></circle>
+                      <polyline points="21 15 16 10 5 21"></polyline>
+                    </svg>
+                    + Imagen
+                  </label>
+                  <input type="file" id="layer-img-upload" accept="image/*" style="display: none;" />
 
-                <div class="overlay-controls" id="overlay-controls">
+                  <button class="btn btn-secondary flex-1 btn-sm" id="btn-add-text">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <polyline points="4 7 4 4 20 4 20 7"></polyline>
+                      <line x1="9" y1="20" x2="15" y2="20"></line>
+                      <line x1="12" y1="4" x2="12" y2="20"></line>
+                    </svg>
+                    + Texto
+                  </button>
+                </div>
+
+                <!-- Lista de Capas Creadas -->
+                <div class="layers-list" id="layers-list">
+                  <p class="empty-layers-msg" id="empty-layers-msg">
+                    No hay capas superpuestas. Pulsa <strong>+ Imagen</strong> o <strong>+ Texto</strong> para añadir portadas, logos, títulos o redes sociales.
+                  </p>
+                </div>
+              </div>
+
+              <!-- Inspector de la Capa Seleccionada -->
+              <div class="designer-section hidden" id="layer-inspector">
+                <div class="section-title-row">
+                  <h4 id="inspector-title">Propiedades de Capa</h4>
+                  <button class="btn-link" id="btn-delete-selected-layer">Eliminar Capa</button>
+                </div>
+
+                <!-- Propiedades específicas para Imagen -->
+                <div class="inspector-fields hidden" id="inspector-image-fields">
                   <div class="form-group">
-                    <label for="overlay-shape">Forma de la Portada</label>
-                    <select id="overlay-shape" class="form-control">
-                      <option value="rounded" selected>Cuadrada (Bordes Redondeados)</option>
-                      <option value="circle">Circular (Vinilo / Avatar)</option>
+                    <label for="layer-img-shape">Forma</label>
+                    <select id="layer-img-shape" class="form-control">
+                      <option value="rounded">Cuadrada con Esquinas Redondeadas</option>
+                      <option value="circle">Circular (Disco de Vinilo / Avatar)</option>
                     </select>
                   </div>
-
                   <div class="slider-row">
-                    <label for="overlay-size">Tamaño: <span id="val-overlay-size">28%</span></label>
-                    <input type="range" id="overlay-size" min="15" max="55" value="28" class="range-slider" />
+                    <label for="layer-img-size">Tamaño: <span id="val-layer-img-size">28%</span></label>
+                    <input type="range" id="layer-img-size" min="10" max="60" value="28" class="range-slider" />
                   </div>
-
                   <div class="slider-row">
-                    <label for="overlay-opacity">Opacidad: <span id="val-overlay-opacity">100%</span></label>
-                    <input type="range" id="overlay-opacity" min="20" max="100" value="100" class="range-slider" />
+                    <label for="layer-img-opacity">Opacidad: <span id="val-layer-img-opacity">100%</span></label>
+                    <input type="range" id="layer-img-opacity" min="20" max="100" value="100" class="range-slider" />
                   </div>
-
-                  <p class="designer-hint">💡 <em>Puedes arrastrar la portada libremente por el canvas para posicionarla.</em></p>
                 </div>
+
+                <!-- Propiedades específicas para Texto -->
+                <div class="inspector-fields hidden" id="inspector-text-fields">
+                  <div class="form-group">
+                    <label for="layer-text-content">Texto</label>
+                    <input type="text" id="layer-text-content" class="form-control" placeholder="Escribe tu texto..." />
+                  </div>
+                  <div class="form-row">
+                    <div class="form-group flex-1">
+                      <label for="layer-text-color">Color</label>
+                      <input type="color" id="layer-text-color" value="#ffffff" class="form-control-color" />
+                    </div>
+                    <div class="form-group flex-1">
+                      <label for="layer-text-font">Tipografía</label>
+                      <select id="layer-text-font" class="form-control">
+                        <option value="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif">Moderna Sans</option>
+                        <option value="Impact, sans-serif">Impact / Potente</option>
+                        <option value="Georgia, serif">Elegante Serif</option>
+                        <option value="'Courier New', monospace">Monospace / Retro</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div class="slider-row">
+                    <label for="layer-text-size">Tamaño: <span id="val-layer-text-size">4.2%</span></label>
+                    <input type="range" id="layer-text-size" min="15" max="100" value="42" class="range-slider" />
+                  </div>
+                  <div class="slider-row">
+                    <label for="layer-text-opacity">Opacidad: <span id="val-layer-text-opacity">100%</span></label>
+                    <input type="range" id="layer-text-opacity" min="20" max="100" value="100" class="range-slider" />
+                  </div>
+                </div>
+
+                <p class="designer-hint">💡 <em>Arrastra directamente el elemento sobre el canvas para cambiar su posición.</em></p>
               </div>
             </div>
 
-            <!-- TAB 2: ONDA SONORA Y TEXTO -->
+            <!-- TAB 2: ONDA SONORA -->
             <div class="tab-content" id="tab-wave">
               <div class="form-group">
-                <label for="visualizer-type">Estilo de Visualización</label>
+                <label for="visualizer-type">Estilo de la Onda Sonora</label>
                 <select id="visualizer-type" class="form-control">
                   <option value="bars" selected>Barras de Frecuencia Simétricas</option>
                   <option value="wave">Onda Continua (Osciloscopio)</option>
@@ -191,15 +248,9 @@
                 </div>
               </div>
 
-              <div class="form-group">
-                <label for="video-title">Título de la Pista</label>
-                <input type="text" id="video-title" class="form-control" placeholder="Ej. Mi Canción Oficial" />
-              </div>
-
-              <div class="form-group">
-                <label for="video-subtitle">Subtítulo o Artista (Opcional)</label>
-                <input type="text" id="video-subtitle" class="form-control" placeholder="Ej. Productor / Álbum 2026" />
-              </div>
+              <p class="designer-hint">
+                ✨ <em>Nota: Puedes agregar tantos títulos, subtítulos o marcas como desees en la pestaña "Capas y Fondo".</em>
+              </p>
             </div>
 
             <!-- TAB 3: CONFIGURACIÓN DE EXPORTACIÓN -->
@@ -276,7 +327,6 @@
           </div>
 
           <div class="modal-body">
-            <!-- Barra de Progreso Principal -->
             <div class="progress-bar-container">
               <div class="progress-bar-fill" id="progress-fill" style="width: 0%;"></div>
             </div>
@@ -285,7 +335,6 @@
               <span id="progress-frames-label">0 / 0 fotogramas</span>
             </div>
 
-            <!-- Grilla de Estadísticas en Tiempo Real -->
             <div class="stats-grid">
               <div class="stat-box">
                 <span class="stat-label">Velocidad</span>
@@ -305,7 +354,6 @@
               </div>
             </div>
 
-            <!-- Área de Resultado / Previsualización -->
             <div class="result-area hidden" id="result-area">
               <p class="result-success" id="result-message">🎉 ¡Video generado con éxito!</p>
               <video id="video-preview-player" controls class="video-preview-player"></video>
@@ -328,7 +376,7 @@
       </div>
 
       <footer class="footer">
-        <p>Soundwave Video Visualizer &bull; Diseñador y Renderizado Client-Side Acelerado &bull; Docker Node.js 20 Alpine</p>
+        <p>Soundwave Video Visualizer &bull; Diseñador Multi-Capa y Renderizado Client-Side &bull; Docker Node.js 20 Alpine</p>
       </footer>
     </div>
     <script type="module" src="./src/main.js"></script>
