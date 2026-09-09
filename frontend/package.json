@@ -11,5 +11,9 @@
   "devDependencies": {
     "sass": "^1.83.4",
     "vite": "^5.4.14"
+  },
+  "dependencies": {
+    "mp4-muxer": "^5.2.2",
+    "webm-muxer": "^5.1.4"
   }
 }
