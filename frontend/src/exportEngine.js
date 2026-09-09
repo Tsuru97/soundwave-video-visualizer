@@ -1,39 +1,37 @@
 /**
- * Motor de Exportación de Video Client-Side para Soundwave Generator
- * Soporta dos estrategias:
- * 1. WebCodecs (Acelerado Ultra-Rápido sin tiempo real, H.264/MP4 y VP9/WebM)
- * 2. MediaRecorder (Grabación en Caliente con canvas.captureStream y chunks)
+ * Motor de Exportación de Video Client-Side con Contrapresión Estricta (Backpressure)
+ * y Soporte de Streaming a Disco (0% Memoria RAM en Archivo de Salida).
  */
 
 import * as Mp4Muxer from 'mp4-muxer';
 import * as WebmMuxer from 'webm-muxer';
 import { renderFrame } from './videoRenderer.js';
 
-/**
- * Verifica si el navegador soporta WebCodecs VideoEncoder
- */
 export function isWebCodecsSupported() {
   return typeof window !== 'undefined' && typeof window.VideoEncoder === 'function';
 }
 
+export function isFileSystemAccessSupported() {
+  return typeof window !== 'undefined' && typeof window.showSaveFilePicker === 'function';
+}
+
 /**
  * Orquestador principal de exportación
- * @param {Object} config
- * @returns {Promise<{ blob: Blob, filename: string }>}
  */
 export async function generateVideo(config) {
   const {
-    mode = 'webcodecs', // 'webcodecs' | 'mediarecorder'
+    mode = 'webcodecs',
     audioBuffer,
     waveformSignature,
-    format = 'mp4',     // 'mp4' | 'webm'
+    format = 'mp4',
     width = 1280,
     height = 720,
     fps = 30,
-    bitrate = 5000000,  // 5 Mbps
+    bitrate = 5000000,
     styleOptions = {},
-    signal,             // AbortSignal
-    onProgress          // Callback ({ percent, currentFrame, totalFrames, fpsRate, elapsedSec, etaSec, chunksCount })
+    fileWritableStream = null, // WritableStream para streaming directo a disco (opcional)
+    signal,
+    onProgress
   } = config;
 
   if (mode === 'webcodecs' && isWebCodecsSupported()) {
@@ -47,13 +45,13 @@ export async function generateVideo(config) {
         fps,
         bitrate,
         styleOptions,
+        fileWritableStream,
         signal,
         onProgress
       });
     } catch (err) {
-      console.warn('[ExportEngine] WebCodecs falló o fue interrumpido, evaluando fallback:', err);
+      console.warn('[ExportEngine] Fallo en WebCodecs:', err);
       if (signal?.aborted) throw err;
-      console.info('[ExportEngine] Ejecutando fallback a MediaRecorder...');
       return await exportWithMediaRecorder({
         audioBuffer,
         waveformSignature,
@@ -82,7 +80,7 @@ export async function generateVideo(config) {
 }
 
 /**
- * Estrategia 1: Exportación Acelerada con WebCodecs y Muxer
+ * Estrategia Acelerada con WebCodecs y Contrapresión Estricta (Backpressure)
  */
 async function exportWithWebCodecs(params) {
   const {
@@ -94,6 +92,7 @@ async function exportWithWebCodecs(params) {
     fps,
     bitrate,
     styleOptions,
+    fileWritableStream,
     signal,
     onProgress
   } = params;
@@ -101,53 +100,48 @@ async function exportWithWebCodecs(params) {
   const totalFrames = waveformSignature.totalFrames;
   const startTime = performance.now();
 
-  // Canvas dedicado para renderizado fuera de pantalla
   const renderCanvas = document.createElement('canvas');
   renderCanvas.width = width;
   renderCanvas.height = height;
   const ctx = renderCanvas.getContext('2d', { alpha: false });
 
-  // 1. Configurar Muxer
-  let muxer;
-  let videoCodecString;
-  let audioCodecString;
+  // 1. Configurar Muxer Target (Directo a Disco o Memoria)
+  const isDirectToDisk = !!fileWritableStream;
+  let target;
+  if (isDirectToDisk) {
+    target = format === 'mp4' 
+      ? new Mp4Muxer.FileSystemWritableFileStreamTarget(fileWritableStream)
+      : new WebmMuxer.FileSystemWritableFileStreamTarget(fileWritableStream);
+  } else {
+    target = format === 'mp4' 
+      ? new Mp4Muxer.ArrayBufferTarget()
+      : new WebmMuxer.ArrayBufferTarget();
+  }
 
   const hasAudio = !!audioBuffer;
   const sampleRate = audioBuffer ? audioBuffer.sampleRate : 44100;
   const numberOfChannels = audioBuffer ? audioBuffer.numberOfChannels : 2;
 
+  let muxer;
+  let videoCodecString;
+  let audioCodecString;
+
   if (format === 'mp4') {
-    videoCodecString = 'avc1.42001f'; // H.264
-    audioCodecString = 'mp4a.40.2';   // AAC-LC
+    videoCodecString = 'avc1.42001f';
+    audioCodecString = 'mp4a.40.2';
     muxer = new Mp4Muxer.Muxer({
-      target: new Mp4Muxer.ArrayBufferTarget(),
-      video: {
-        codec: 'avc',
-        width,
-        height
-      },
-      audio: hasAudio ? {
-        codec: 'aac',
-        numberOfChannels,
-        sampleRate
-      } : undefined,
-      fastStart: 'in-memory'
+      target,
+      video: { codec: 'avc', width, height },
+      audio: hasAudio ? { codec: 'aac', numberOfChannels, sampleRate } : undefined,
+      fastStart: isDirectToDisk ? false : 'in-memory'
     });
   } else {
-    videoCodecString = 'vp09.00.10.08'; // VP9
-    audioCodecString = 'opus';          // Opus
+    videoCodecString = 'vp09.00.10.08';
+    audioCodecString = 'opus';
     muxer = new WebmMuxer.Muxer({
-      target: new WebmMuxer.ArrayBufferTarget(),
-      video: {
-        codec: 'V_VP9',
-        width,
-        height
-      },
-      audio: hasAudio ? {
-        codec: 'A_OPUS',
-        numberOfChannels,
-        sampleRate
-      } : undefined
+      target,
+      video: { codec: 'V_VP9', width, height },
+      audio: hasAudio ? { codec: 'A_OPUS', numberOfChannels, sampleRate } : undefined
     });
   }
 
@@ -158,9 +152,7 @@ async function exportWithWebCodecs(params) {
       encodedChunksCount++;
       muxer.addVideoChunk(chunk, meta);
     },
-    error: (e) => {
-      console.error('[WebCodecs] Error en VideoEncoder:', e);
-    }
+    error: (e) => console.error('[WebCodecs] Error en VideoEncoder:', e)
   });
 
   videoEncoder.configure({
@@ -171,10 +163,8 @@ async function exportWithWebCodecs(params) {
     framerate: fps
   });
 
-  // 3. Configurar AudioEncoder si hay audio
+  // 3. Codificación de Audio con Contrapresión
   let audioEncoder = null;
-  let canEncodeAudio = false;
-
   if (hasAudio && typeof window.AudioEncoder === 'function') {
     try {
       const audioSupport = await AudioEncoder.isConfigSupported({
@@ -185,9 +175,7 @@ async function exportWithWebCodecs(params) {
 
       if (audioSupport.supported) {
         audioEncoder = new AudioEncoder({
-          output: (chunk, meta) => {
-            muxer.addAudioChunk(chunk, meta);
-          },
+          output: (chunk, meta) => muxer.addAudioChunk(chunk, meta),
           error: (e) => console.error('[WebCodecs] Error en AudioEncoder:', e)
         });
 
@@ -197,85 +185,107 @@ async function exportWithWebCodecs(params) {
           numberOfChannels,
           bitrate: 128000
         });
-        canEncodeAudio = true;
+
+        const channelData = [];
+        for (let c = 0; c < numberOfChannels; c++) {
+          channelData.push(audioBuffer.getChannelData(c));
+        }
+
+        const audioChunkSize = 2048;
+        const totalAudioLength = audioBuffer.length;
+        let audioOffset = 0;
+
+        while (audioOffset < totalAudioLength) {
+          if (signal?.aborted) throw new Error('Cancelado por el usuario');
+
+          // CONTRAPRESIÓN DE AUDIO: No acumular más de 8 chunks en espera
+          while (audioEncoder.encodeQueueSize >= 8) {
+            await new Promise((resolve) => {
+              audioEncoder.ondequeue = () => resolve();
+              setTimeout(resolve, 8);
+            });
+          }
+
+          const framesToProcess = Math.min(audioChunkSize, totalAudioLength - audioOffset);
+          const audioTimestampMicros = Math.floor((audioOffset / sampleRate) * 1_000_000);
+
+          const planarBuffer = new Float32Array(framesToProcess * numberOfChannels);
+          for (let c = 0; c < numberOfChannels; c++) {
+            planarBuffer.set(channelData[c].subarray(audioOffset, audioOffset + framesToProcess), c * framesToProcess);
+          }
+
+          const audioData = new AudioData({
+            format: 'f32-planar',
+            sampleRate,
+            numberOfChannels,
+            numberOfFrames: framesToProcess,
+            timestamp: audioTimestampMicros,
+            data: planarBuffer
+          });
+
+          audioEncoder.encode(audioData);
+          audioData.close();
+          audioOffset += framesToProcess;
+        }
+
+        await audioEncoder.flush();
+        audioEncoder.close();
       }
     } catch (e) {
-      console.warn('[WebCodecs] AudioEncoder no soportó el códec, continuando solo con video:', e);
+      console.warn('[WebCodecs] Fallback sin pista de audio:', e);
     }
   }
 
-  // 4. Codificar Audio en trozos (chunks de audio)
-  if (canEncodeAudio && audioEncoder) {
-    const channelData = [];
-    for (let c = 0; c < numberOfChannels; c++) {
-      channelData.push(audioBuffer.getChannelData(c));
-    }
+  // 4. Bucle de Renderizado de Video con Contrapresión Estricta
+  // REGLA CRÍTICA: Mantener encodeQueueSize <= 4 en todo momento
+  // Esto garantiza que Chromium NUNCA almacene más de 4 fotogramas crudos (~14 MB) en RAM
+  const frameIntervalMicros = Math.floor(1_000_000 / fps);
 
-    const audioChunkSize = 2048;
-    const totalAudioLength = audioBuffer.length;
-    let audioOffset = 0;
-
-    while (audioOffset < totalAudioLength) {
-      if (signal?.aborted) throw new Error('Generación cancelada por el usuario');
-
-      const framesToProcess = Math.min(audioChunkSize, totalAudioLength - audioOffset);
-      const audioTimestampMicros = Math.floor((audioOffset / sampleRate) * 1_000_000);
-
-      // Copiar datos planares
-      const planarBuffer = new Float32Array(framesToProcess * numberOfChannels);
-      for (let c = 0; c < numberOfChannels; c++) {
-        planarBuffer.set(channelData[c].subarray(audioOffset, audioOffset + framesToProcess), c * framesToProcess);
-      }
-
-      const audioData = new AudioData({
-        format: 'f32-planar',
-        sampleRate,
-        numberOfChannels,
-        numberOfFrames: framesToProcess,
-        timestamp: audioTimestampMicros,
-        data: planarBuffer
-      });
-
-      audioEncoder.encode(audioData);
-      audioData.close();
-      audioOffset += framesToProcess;
-    }
-
-    await audioEncoder.flush();
-    audioEncoder.close();
-  }
-
-  // 5. Bucle de Renderizado Acelerado de Video por Fotogramas
   for (let f = 0; f < totalFrames; f++) {
     if (signal?.aborted) {
       videoEncoder.close();
-      throw new Error('Generación cancelada por el usuario');
+      throw new Error('Cancelado por el usuario');
     }
 
-    // Dibujar fotograma actual
-    renderFrame(ctx, width, height, waveformSignature.frames[f], styleOptions);
+    // CONTRAPRESIÓN CRÍTICA: Esperar a que la GPU consuma fotogramas pendientes
+    while (videoEncoder.encodeQueueSize >= 4) {
+      await new Promise((resolve) => {
+        const onDrain = () => resolve();
+        videoEncoder.ondequeue = onDrain;
+        setTimeout(onDrain, 6); // Salvaguarda con timeout
+      });
+    }
 
-    const frameTimestampMicros = Math.floor((f * 1_000_000) / fps);
-    const frameDurationMicros = Math.floor(1_000_000 / fps);
+    // Obtener fotograma del buffer plano optimizado
+    const frameBars = waveformSignature.getFrame ? waveformSignature.getFrame(f) : waveformSignature.frames[f];
+    renderFrame(ctx, width, height, frameBars, styleOptions);
+
+    const frameTimestampMicros = Math.floor(f * frameIntervalMicros);
 
     const videoFrame = new VideoFrame(renderCanvas, {
       timestamp: frameTimestampMicros,
-      duration: frameDurationMicros
+      duration: frameIntervalMicros
     });
 
     const isKeyFrame = f % (fps * 2) === 0;
     videoEncoder.encode(videoFrame, { keyFrame: isKeyFrame });
-    videoFrame.close();
+    videoFrame.close(); // Liberar inmediatamente la referencia del frame
 
-    // Actualización periódica de progreso y liberación del event loop (cada 10 frames)
-    if (f % 10 === 0 || f === totalFrames - 1) {
-      await new Promise((resolve) => setTimeout(resolve, 0));
+    // Notificación de progreso cada 15 fotogramas
+    if (f % 15 === 0 || f === totalFrames - 1) {
+      await new Promise((resolve) => setTimeout(resolve, 0)); // Ceder el event loop para Garbage Collector
 
       const now = performance.now();
       const elapsedSec = (now - startTime) / 1000;
       const progressRatio = (f + 1) / totalFrames;
       const currentFpsRate = (f + 1) / elapsedSec;
       const etaSec = currentFpsRate > 0 ? (totalFrames - (f + 1)) / currentFpsRate : 0;
+
+      // Medir memoria RAM en vivo si el navegador lo soporta
+      let usedRamMB = null;
+      if (typeof window !== 'undefined' && window.performance && window.performance.memory) {
+        usedRamMB = Math.round(window.performance.memory.usedJSHeapSize / (1024 * 1024));
+      }
 
       if (onProgress) {
         onProgress({
@@ -285,28 +295,34 @@ async function exportWithWebCodecs(params) {
           fpsRate: Math.round(currentFpsRate),
           elapsedSec: Math.round(elapsedSec),
           etaSec: Math.round(etaSec),
-          chunksCount: encodedChunksCount
+          chunksCount: encodedChunksCount,
+          usedRamMB
         });
       }
     }
   }
 
-  // Finalizar codificación de video
+  // Esperar a que la GPU termine de codificar todos los fotogramas restantes
   await videoEncoder.flush();
   videoEncoder.close();
 
-  // Finalizar contenedor Muxer
+  // Finalizar el contenedor
   muxer.finalize();
-  const buffer = muxer.target.buffer;
-  const mimeType = format === 'mp4' ? 'video/mp4' : 'video/webm';
-  const blob = new Blob([buffer], { type: mimeType });
+
+  let blob = null;
   const filename = `soundwave-video-${Date.now()}.${format}`;
 
-  return { blob, filename };
+  if (!isDirectToDisk) {
+    const buffer = muxer.target.buffer;
+    const mimeType = format === 'mp4' ? 'video/mp4' : 'video/webm';
+    blob = new Blob([buffer], { type: mimeType });
+  }
+
+  return { blob, filename, directToDisk: isDirectToDisk };
 }
 
 /**
- * Estrategia 2: Grabación en Caliente con MediaRecorder y canvas.captureStream
+ * Estrategia MediaRecorder con Liberación Periódica de Chunks
  */
 async function exportWithMediaRecorder(params) {
   const {
@@ -329,10 +345,7 @@ async function exportWithMediaRecorder(params) {
   renderCanvas.height = height;
   const ctx = renderCanvas.getContext('2d', { alpha: false });
 
-  // 1. Capturar Stream del Canvas
   const canvasStream = renderCanvas.captureStream(fps);
-
-  // 2. Conectar AudioStream si existe audio disponible
   let audioContext = null;
   let sourceNode = null;
   let mediaStreamDest = null;
@@ -350,7 +363,6 @@ async function exportWithMediaRecorder(params) {
 
   const combinedStream = new MediaStream(tracks);
 
-  // Seleccionar códec compatible
   let mimeType = 'video/webm;codecs=vp9,opus';
   if (!MediaRecorder.isTypeSupported(mimeType)) {
     mimeType = 'video/webm;codecs=vp8,opus';
@@ -365,14 +377,11 @@ async function exportWithMediaRecorder(params) {
     videoBitsPerSecond: bitrate
   });
 
-  // Liberación y recolección de trozos (chunks)
   recorder.ondataavailable = (event) => {
     if (event.data && event.data.size > 0) {
       recordedChunks.push(event.data);
       if (onProgress) {
-        onProgress({
-          chunksCount: recordedChunks.length
-        });
+        onProgress({ chunksCount: recordedChunks.length });
       }
     }
   };
@@ -380,24 +389,17 @@ async function exportWithMediaRecorder(params) {
   return new Promise(async (resolve, reject) => {
     recorder.onstop = () => {
       combinedStream.getTracks().forEach((t) => t.stop());
-      if (audioContext && audioContext.state !== 'closed') {
-        audioContext.close();
-      }
+      if (audioContext && audioContext.state !== 'closed') audioContext.close();
 
       const blob = new Blob(recordedChunks, { type: mimeType });
       const filename = `soundwave-video-${Date.now()}.webm`;
-      resolve({ blob, filename });
+      resolve({ blob, filename, directToDisk: false });
     };
 
-    recorder.onerror = (e) => {
-      reject(e.error || new Error('Error en MediaRecorder'));
-    };
+    recorder.onerror = (e) => reject(e.error || new Error('Error en MediaRecorder'));
 
-    // Iniciar con chunks periódicos cada 1000ms
     recorder.start(1000);
-    if (sourceNode) {
-      sourceNode.start(0);
-    }
+    if (sourceNode) sourceNode.start(0);
 
     const frameIntervalMs = 1000 / fps;
 
@@ -405,11 +407,12 @@ async function exportWithMediaRecorder(params) {
       if (signal?.aborted) {
         recorder.stop();
         if (sourceNode) sourceNode.stop();
-        reject(new Error('Generación cancelada por el usuario'));
+        reject(new Error('Cancelado por el usuario'));
         return;
       }
 
-      renderFrame(ctx, width, height, waveformSignature.frames[f], styleOptions);
+      const frameBars = waveformSignature.getFrame ? waveformSignature.getFrame(f) : waveformSignature.frames[f];
+      renderFrame(ctx, width, height, frameBars, styleOptions);
 
       const now = performance.now();
       const elapsedSec = (now - startTime) / 1000;
@@ -417,7 +420,12 @@ async function exportWithMediaRecorder(params) {
       const currentFps = (f + 1) / elapsedSec;
       const etaSec = currentFps > 0 ? (totalFrames - (f + 1)) / currentFps : 0;
 
-      if (onProgress && (f % 10 === 0 || f === totalFrames - 1)) {
+      let usedRamMB = null;
+      if (typeof window !== 'undefined' && window.performance && window.performance.memory) {
+        usedRamMB = Math.round(window.performance.memory.usedJSHeapSize / (1024 * 1024));
+      }
+
+      if (onProgress && (f % 15 === 0 || f === totalFrames - 1)) {
         onProgress({
           percent: Math.round(progressRatio * 100),
           currentFrame: f + 1,
@@ -425,16 +433,15 @@ async function exportWithMediaRecorder(params) {
           fpsRate: Math.round(currentFps),
           elapsedSec: Math.round(elapsedSec),
           etaSec: Math.round(etaSec),
-          chunksCount: recordedChunks.length
+          chunksCount: recordedChunks.length,
+          usedRamMB
         });
       }
 
       await new Promise((r) => setTimeout(r, frameIntervalMs));
     }
 
-    if (sourceNode) {
-      sourceNode.stop();
-    }
+    if (sourceNode) sourceNode.stop();
     recorder.stop();
   });
 }

@@ -1,58 +1,47 @@
 /**
- * Procesador de Audio para Extracción Rápida de la Firma de Onda (Waveform Signature)
- * Permite decodificar y analizar un audio de larga duración (hasta 1 hora o más)
- * en pocos segundos mediante Web Audio API y TypedArrays en memoria.
+ * Procesador de Audio de Alta Eficiencia y Bajo Consumo de Memoria
+ * Extrae la firma de onda para audios de hasta 1 hora sin duplicar buffers en memoria.
  */
 
 /**
- * Decodifica un archivo de audio (File o Blob) en un AudioBuffer nativo
+ * Decodifica un archivo de audio en un AudioBuffer nativo
  * @param {File|Blob} file 
  * @param {AudioContext} audioCtx 
  * @returns {Promise<AudioBuffer>}
  */
 export async function decodeAudioFile(file, audioCtx) {
   const arrayBuffer = await file.arrayBuffer();
-  // decodeAudioData de Web Audio API realiza el demuxing y decodificación en C++ nativo del navegador
   return await audioCtx.decodeAudioData(arrayBuffer);
 }
 
 /**
- * Extrae la "firma de onda" completa para cada fotograma del video a generar.
- * Computa tanto el volumen pico/RMS como un desglose de frecuencias simuladas (graves, medios, agudos)
- * para crear visualizaciones reactivas y fluidas sin necesidad de reproducir el audio en tiempo real.
+ * Extrae la "firma de onda" completa optimizada para cero allocations innecesarios.
+ * Utiliza un ÚNICO Float32Array plano para todos los fotogramas, evitando miles de objetos
+ * en el recolector de basura (GC) y reduciendo el consumo de RAM a ~14 MB para 30 minutos.
  * 
  * @param {AudioBuffer} audioBuffer
- * @param {number} fps Fotogramas por segundo (ej. 30 o 60)
- * @param {number} numBars Cantidad de barras por fotograma (ej. 64 o 128)
- * @returns {{ duration: number, totalFrames: number, sampleRate: number, frames: Float32Array[] }}
+ * @param {number} fps
+ * @param {number} numBars
+ * @returns {{ duration: number, totalFrames: number, sampleRate: number, fps: number, numBars: number, getFrame: (f: number) => Float32Array, flatBuffer: Float32Array }}
  */
 export function extractWaveformSignature(audioBuffer, fps = 30, numBars = 64) {
   const sampleRate = audioBuffer.sampleRate;
   const duration = audioBuffer.duration;
   const totalFrames = Math.max(1, Math.floor(duration * fps));
   const samplesPerFrame = Math.floor(sampleRate / fps);
-
-  // Combinar canales estéreo en mono para análisis de amplitud
-  const numChannels = audioBuffer.numberOfChannels;
   const length = audioBuffer.length;
-  const monoData = new Float32Array(length);
 
-  if (numChannels === 1) {
-    monoData.set(audioBuffer.getChannelData(0));
-  } else {
-    const ch0 = audioBuffer.getChannelData(0);
-    const ch1 = audioBuffer.getChannelData(1);
-    for (let i = 0; i < length; i++) {
-      monoData[i] = (ch0[i] + ch1[i]) * 0.5;
-    }
-  }
+  const numChannels = audioBuffer.numberOfChannels;
+  const ch0 = audioBuffer.getChannelData(0);
+  const ch1 = numChannels > 1 ? audioBuffer.getChannelData(1) : null;
 
-  const frames = new Array(totalFrames);
+  // UN SOLO BUFFER PLANO en memoria para todos los fotogramas
+  // Tamaño para 30 minutos a 30 fps (54,000 frames x 64 bars) = ~13.8 MB
+  const flatBuffer = new Float32Array(totalFrames * numBars);
   const subChunkSize = Math.max(1, Math.floor(samplesPerFrame / numBars));
 
-  // Recorrer cada fotograma virtual
   for (let f = 0; f < totalFrames; f++) {
-    const frameBars = new Float32Array(numBars);
+    const frameOffset = f * numBars;
     const frameStartSample = f * samplesPerFrame;
 
     for (let b = 0; b < numBars; b++) {
@@ -65,25 +54,29 @@ export function extractWaveformSignature(audioBuffer, fps = 30, numBars = 64) {
 
       if (count > 0) {
         for (let s = start; s < end; s++) {
-          const val = Math.abs(monoData[s]);
+          // Lectura directa sin duplicar array estéreo a mono
+          const val = Math.abs(ch1 ? (ch0[s] + ch1[s]) * 0.5 : ch0[s]);
           if (val > peak) peak = val;
           sumSquare += val * val;
         }
+
         const rms = Math.sqrt(sumSquare / count);
-        // Combinar peak y RMS con ponderación armónica
-        // Añadir una modulación suave tipo espectro (graves a agudos)
         const frequencyWeight = 1.0 + Math.sin((b / numBars) * Math.PI) * 0.5;
-        let amplitude = (peak * 0.6 + rms * 0.4) * frequencyWeight;
-        
-        // Limitar entre 0 y 1
-        frameBars[b] = Math.min(1.0, amplitude);
+        const amplitude = (peak * 0.6 + rms * 0.4) * frequencyWeight;
+
+        flatBuffer[frameOffset + b] = Math.min(1.0, amplitude);
       } else {
-        frameBars[b] = 0;
+        flatBuffer[frameOffset + b] = 0;
       }
     }
-
-    frames[f] = frameBars;
   }
+
+  // Helper de acceso sin crear copias (zero-copy view con subarray)
+  const getFrame = (frameIndex) => {
+    const safeIndex = Math.max(0, Math.min(totalFrames - 1, frameIndex));
+    const start = safeIndex * numBars;
+    return flatBuffer.subarray(start, start + numBars);
+  };
 
   return {
     duration,
@@ -91,6 +84,7 @@ export function extractWaveformSignature(audioBuffer, fps = 30, numBars = 64) {
     sampleRate,
     fps,
     numBars,
-    frames
+    flatBuffer,
+    getFrame
   };
 }

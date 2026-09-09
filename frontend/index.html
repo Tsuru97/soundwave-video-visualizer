@@ -120,7 +120,7 @@
             <div class="form-group">
               <label for="resolution-select">Resolución de Exportación</label>
               <select id="resolution-select" class="form-control">
-                <option value="1280x720" selected>1280x720 (HD 16:9 - Rápido)</option>
+                <option value="1280x720" selected>1280x720 (HD 16:9 - Rápido y Ligero)</option>
                 <option value="1920x1080">1920x1080 (Full HD 16:9)</option>
                 <option value="1080x1920">1080x1920 (Vertical 9:16 Shorts/Reels)</option>
                 <option value="1080x1080">1080x1080 (Cuadrado 1:1)</option>
@@ -144,6 +144,17 @@
               </div>
             </div>
 
+            <!-- Opción de Guardado Directo a Disco (Streaming para Cero RAM) -->
+            <div class="form-group checkbox-group" id="group-direct-disk">
+              <label class="checkbox-label">
+                <input type="checkbox" id="check-direct-disk" checked />
+                <span>
+                  <strong>Guardar directo a disco (Streaming)</strong>
+                  <small class="checkbox-desc">Recomendado para audios de 10 a 60 min. Escribe directo al archivo local con 0% uso de RAM.</small>
+                </span>
+              </label>
+            </div>
+
             <div class="form-group">
               <label for="video-title">Título del Video (Opcional)</label>
               <input type="text" id="video-title" class="form-control" placeholder="Ej. Mi Canción Oficial" />
@@ -158,7 +169,7 @@
                 Generar Video (Client-Side)
               </button>
               <p class="help-text" id="export-help-text">
-                El motor WebCodecs renderizará a máxima velocidad sin esperar la reproducción en tiempo real.
+                Contrapresión activa: la memoria RAM se mantendrá controlada en todo momento.
               </p>
             </div>
           </aside>
@@ -190,6 +201,10 @@
                 <span class="stat-value" id="stat-fps">0 fps</span>
               </div>
               <div class="stat-box">
+                <span class="stat-label">Memoria RAM Heap</span>
+                <span class="stat-value text-success" id="stat-ram">-- MB</span>
+              </div>
+              <div class="stat-box">
                 <span class="stat-label">Tiempo Transcurrido</span>
                 <span class="stat-value" id="stat-elapsed">00:00</span>
               </div>
@@ -197,15 +212,11 @@
                 <span class="stat-label">Tiempo Restante (ETA)</span>
                 <span class="stat-value" id="stat-eta">Calculando...</span>
               </div>
-              <div class="stat-box">
-                <span class="stat-label">Trozos (Chunks)</span>
-                <span class="stat-value" id="stat-chunks">0 trozos</span>
-              </div>
             </div>
 
             <!-- Área de Resultado / Previsualización -->
             <div class="result-area hidden" id="result-area">
-              <p class="result-success">🎉 ¡Video generado con éxito!</p>
+              <p class="result-success" id="result-message">🎉 ¡Video generado con éxito!</p>
               <video id="video-preview-player" controls class="video-preview-player"></video>
             </div>
           </div>
@@ -226,7 +237,7 @@
       </div>
 
       <footer class="footer">
-        <p>Soundwave Video Visualizer &bull; Renderizado Client-Side Acelerado &bull; Docker Node.js 20 Alpine</p>
+        <p>Soundwave Video Visualizer &bull; Renderizado Client-Side Acelerado con Contrapresión &bull; Docker Node.js 20 Alpine</p>
       </footer>
     </div>
     <script type="module" src="./src/main.js"></script>
