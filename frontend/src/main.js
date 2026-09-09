@@ -1,9 +1,9 @@
-// Soundwave Video Visualizer - Client-Side Engine Orchestrator
+// Soundwave Video Visualizer - Client-Side Engine & Visual Designer
 import { decodeAudioFile, extractWaveformSignature } from './audioProcessor.js';
 import { renderFrame } from './videoRenderer.js';
 import { generateVideo, isWebCodecsSupported, isFileSystemAccessSupported } from './exportEngine.js';
 
-console.log('[Soundwave] Inicializando Soundwave Engine con Contrapresión...');
+console.log('[Soundwave] Inicializando Soundwave Engine con Diseñador Visual...');
 
 // Estado global de la aplicación
 const state = {
@@ -13,7 +13,27 @@ const state = {
   isRendering: false,
   abortController: null,
   audioContext: null,
-  animationFrameId: null
+  animationFrameId: null,
+
+  // Estado del Diseñador Visual
+  designer: {
+    background: {
+      image: null,
+      blur: 10,
+      dim: 0.45
+    },
+    overlay: {
+      image: null,
+      relX: 0.5,
+      relY: 0.35,
+      relSize: 0.28,
+      shape: 'rounded', // 'rounded' | 'circle'
+      opacity: 1.0,
+      shadow: true
+    },
+    isDraggingOverlay: false,
+    dragOffset: { x: 0, y: 0 }
+  }
 };
 
 // Elementos del DOM
@@ -27,7 +47,9 @@ const elements = {
 
   // Visualizador y controles
   canvas: document.getElementById('visualizer-canvas'),
+  canvasContainer: document.getElementById('canvas-container'),
   canvasOverlay: document.getElementById('canvas-overlay'),
+  canvasDragHint: document.getElementById('canvas-drag-hint'),
   audioElement: document.getElementById('audio-element'),
   audioUpload: document.getElementById('audio-upload'),
   btnPlayPause: document.getElementById('btn-play-pause'),
@@ -36,17 +58,41 @@ const elements = {
   signatureStatusBar: document.getElementById('signature-status-bar'),
   signatureStatusText: document.getElementById('signature-status-text'),
 
-  // Configuración de exportación
-  exportEngineSelect: document.getElementById('export-engine-select'),
+  // Pestañas
+  tabBtns: document.querySelectorAll('.tab-btn'),
+  tabContents: document.querySelectorAll('.tab-content'),
+
+  // Diseñador: Fondo
+  bgUpload: document.getElementById('bg-upload'),
+  btnRemoveBg: document.getElementById('btn-remove-bg'),
+  bgBlur: document.getElementById('bg-blur'),
+  valBgBlur: document.getElementById('val-bg-blur'),
+  bgDim: document.getElementById('bg-dim'),
+  valBgDim: document.getElementById('val-bg-dim'),
+
+  // Diseñador: Portada / Logo
+  overlayUpload: document.getElementById('overlay-upload'),
+  btnRemoveOverlay: document.getElementById('btn-remove-overlay'),
+  overlayShape: document.getElementById('overlay-shape'),
+  overlaySize: document.getElementById('overlay-size'),
+  valOverlaySize: document.getElementById('val-overlay-size'),
+  overlayOpacity: document.getElementById('overlay-opacity'),
+  valOverlayOpacity: document.getElementById('val-overlay-opacity'),
+
+  // Onda Sonora y Textos
   visualizerTypeSelect: document.getElementById('visualizer-type'),
   colorAccentInput: document.getElementById('color-accent'),
   colorSecondaryInput: document.getElementById('color-secondary'),
+  videoTitleInput: document.getElementById('video-title'),
+  videoSubtitleInput: document.getElementById('video-subtitle'),
+
+  // Exportación
+  exportEngineSelect: document.getElementById('export-engine-select'),
   resolutionSelect: document.getElementById('resolution-select'),
   fpsSelect: document.getElementById('fps-select'),
   formatSelect: document.getElementById('format-select'),
   checkDirectDisk: document.getElementById('check-direct-disk'),
   groupDirectDisk: document.getElementById('group-direct-disk'),
-  videoTitleInput: document.getElementById('video-title'),
   btnRender: document.getElementById('btn-render'),
   exportHelpText: document.getElementById('export-help-text'),
 
@@ -71,7 +117,23 @@ const elements = {
 
 const ctx = elements.canvas.getContext('2d');
 
-// 1. Diagnóstico de Capacidades y Soporte de File System API
+// =========================================================================
+// 1. GESTIÓN DE PESTAÑAS DEL PANEL LATERAL
+// =========================================================================
+elements.tabBtns.forEach(btn => {
+  btn.addEventListener('click', () => {
+    elements.tabBtns.forEach(b => b.classList.remove('active'));
+    elements.tabContents.forEach(c => c.classList.remove('active'));
+
+    btn.classList.add('active');
+    const targetTabId = btn.getAttribute('data-tab');
+    document.getElementById(targetTabId)?.classList.add('active');
+  });
+});
+
+// =========================================================================
+// 2. DIAGNÓSTICO DE CAPACIDADES
+// =========================================================================
 function checkCapabilities() {
   const isIsolated = window.crossOriginIsolated;
   const hasSab = typeof SharedArrayBuffer !== 'undefined';
@@ -108,7 +170,9 @@ function checkCapabilities() {
   }
 }
 
-// 2. AudioContext único
+// =========================================================================
+// 3. AUDIOCONTEXT
+// =========================================================================
 function getOrCreateAudioContext() {
   if (!state.audioContext || state.audioContext.state === 'closed') {
     const AudioCtx = window.AudioContext || window.webkitAudioContext;
@@ -117,7 +181,54 @@ function getOrCreateAudioContext() {
   return state.audioContext;
 }
 
-// 3. Carga y Procesamiento de Audio
+// =========================================================================
+// 4. FUNCIONES DE DIBUJO Y DISEÑADOR
+// =========================================================================
+function getRenderOptions(isSelected = false) {
+  return {
+    style: elements.visualizerTypeSelect.value,
+    accentColor: elements.colorAccentInput.value,
+    secondaryColor: elements.colorSecondaryInput.value,
+    title: elements.videoTitleInput.value || '',
+    subtitle: elements.videoSubtitleInput.value || (state.audioFile?.name || ''),
+    background: {
+      image: state.designer.background.image,
+      blur: state.designer.background.blur,
+      dim: state.designer.background.dim
+    },
+    overlay: state.designer.overlay.image ? {
+      image: state.designer.overlay.image,
+      relX: state.designer.overlay.relX,
+      relY: state.designer.overlay.relY,
+      relSize: state.designer.overlay.relSize,
+      shape: state.designer.overlay.shape,
+      opacity: state.designer.overlay.opacity,
+      shadow: state.designer.overlay.shadow
+    } : null,
+    isSelectedOverlay: isSelected
+  };
+}
+
+function drawCurrentFrame(frameData, isSelected = false) {
+  renderFrame(ctx, elements.canvas.width, elements.canvas.height, frameData, getRenderOptions(isSelected));
+}
+
+function redrawPreview() {
+  if (state.waveformSignature) {
+    const currentTime = elements.audioElement?.currentTime || 0;
+    const fps = state.waveformSignature.fps || 30;
+    const frameIndex = Math.floor(currentTime * fps);
+    const frame = state.waveformSignature.getFrame(frameIndex);
+    drawCurrentFrame(frame, !!state.designer.overlay.image);
+  } else {
+    // Dibujar lienzo en reposo
+    drawCurrentFrame(null, !!state.designer.overlay.image);
+  }
+}
+
+// =========================================================================
+// 5. CARGA DE ARCHIVO DE AUDIO
+// =========================================================================
 elements.audioUpload.addEventListener('change', async (event) => {
   const file = event.target.files[0];
   if (!file) return;
@@ -125,6 +236,10 @@ elements.audioUpload.addEventListener('change', async (event) => {
   state.audioFile = file;
   elements.fileInfo.textContent = `${file.name} (${(file.size / (1024 * 1024)).toFixed(2)} MB)`;
   elements.audioElement.src = URL.createObjectURL(file);
+
+  if (!elements.videoTitleInput.value) {
+    elements.videoTitleInput.value = file.name.replace(/\.[^/.]+$/, "");
+  }
 
   elements.signatureStatusBar.classList.remove('hidden', 'ready');
   elements.signatureStatusText.textContent = 'Extrayendo firma de onda con Web Audio API (optimizado bajo consumo de RAM)...';
@@ -142,15 +257,13 @@ elements.audioUpload.addEventListener('change', async (event) => {
     const durationFormatted = formatSeconds(state.audioBuffer.duration);
 
     elements.signatureStatusBar.classList.add('ready');
-    elements.signatureStatusText.innerHTML = `✅ <strong>Firma de onda extraída en ${elapsedSec}s</strong> (${state.waveformSignature.totalFrames} fotogramas para ${durationFormatted} de audio - Buffer plano: ${(state.waveformSignature.flatBuffer.byteLength / (1024 * 1024)).toFixed(1)} MB).`;
+    elements.signatureStatusText.innerHTML = `✅ <strong>Firma extraída en ${elapsedSec}s</strong> (${state.waveformSignature.totalFrames} fotogramas para ${durationFormatted} de audio - Buffer: ${(state.waveformSignature.flatBuffer.byteLength / (1024 * 1024)).toFixed(1)} MB).`;
 
     elements.btnPlayPause.disabled = false;
     elements.btnRender.disabled = false;
     elements.canvasOverlay.classList.add('hidden');
 
-    // Dibujar fotograma de muestra
-    const sampleFrame = state.waveformSignature.getFrame(Math.floor(state.waveformSignature.totalFrames * 0.15));
-    drawCurrentFrame(sampleFrame);
+    redrawPreview();
 
   } catch (err) {
     console.error('[AudioProcessor] Error:', err);
@@ -159,27 +272,179 @@ elements.audioUpload.addEventListener('change', async (event) => {
   }
 });
 
-function drawCurrentFrame(frameData) {
-  renderFrame(ctx, elements.canvas.width, elements.canvas.height, frameData, {
-    style: elements.visualizerTypeSelect.value,
-    accentColor: elements.colorAccentInput.value,
-    secondaryColor: elements.colorSecondaryInput.value,
-    title: elements.videoTitleInput.value || ''
-  });
-}
+// =========================================================================
+// 6. GESTIÓN DEL FONDO (DISEÑADOR)
+// =========================================================================
+elements.bgUpload.addEventListener('change', (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
 
-// Actualizar vista previa al cambiar estilos
-[elements.visualizerTypeSelect, elements.colorAccentInput, elements.colorSecondaryInput, elements.videoTitleInput].forEach(input => {
+  const reader = new FileReader();
+  reader.onload = (event) => {
+    const img = new Image();
+    img.onload = () => {
+      state.designer.background.image = img;
+      elements.btnRemoveBg.classList.remove('hidden');
+      redrawPreview();
+    };
+    img.src = event.target.result;
+  };
+  reader.readAsDataURL(file);
+});
+
+elements.btnRemoveBg.addEventListener('click', () => {
+  state.designer.background.image = null;
+  elements.bgUpload.value = '';
+  elements.btnRemoveBg.classList.add('hidden');
+  redrawPreview();
+});
+
+elements.bgBlur.addEventListener('input', (e) => {
+  state.designer.background.blur = parseInt(e.target.value, 10);
+  elements.valBgBlur.textContent = `${e.target.value}px`;
+  redrawPreview();
+});
+
+elements.bgDim.addEventListener('input', (e) => {
+  state.designer.background.dim = parseInt(e.target.value, 10) / 100;
+  elements.valBgDim.textContent = `${e.target.value}%`;
+  redrawPreview();
+});
+
+// =========================================================================
+// 7. GESTIÓN DE PORTADA / LOGO (DISEÑADOR)
+// =========================================================================
+elements.overlayUpload.addEventListener('change', (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+
+  const reader = new FileReader();
+  reader.onload = (event) => {
+    const img = new Image();
+    img.onload = () => {
+      state.designer.overlay.image = img;
+      elements.btnRemoveOverlay.classList.remove('hidden');
+      elements.canvasDragHint.classList.remove('hidden');
+      setTimeout(() => elements.canvasDragHint.classList.add('hidden'), 4000);
+      redrawPreview();
+    };
+    img.src = event.target.result;
+  };
+  reader.readAsDataURL(file);
+});
+
+elements.btnRemoveOverlay.addEventListener('click', () => {
+  state.designer.overlay.image = null;
+  elements.overlayUpload.value = '';
+  elements.btnRemoveOverlay.classList.add('hidden');
+  elements.canvasDragHint.classList.add('hidden');
+  redrawPreview();
+});
+
+elements.overlayShape.addEventListener('change', (e) => {
+  state.designer.overlay.shape = e.target.value;
+  redrawPreview();
+});
+
+elements.overlaySize.addEventListener('input', (e) => {
+  state.designer.overlay.relSize = parseInt(e.target.value, 10) / 100;
+  elements.valOverlaySize.textContent = `${e.target.value}%`;
+  redrawPreview();
+});
+
+elements.overlayOpacity.addEventListener('input', (e) => {
+  state.designer.overlay.opacity = parseInt(e.target.value, 10) / 100;
+  elements.valOverlayOpacity.textContent = `${e.target.value}%`;
+  redrawPreview();
+});
+
+// Reactividad de colores y textos
+[elements.visualizerTypeSelect, elements.colorAccentInput, elements.colorSecondaryInput, elements.videoTitleInput, elements.videoSubtitleInput].forEach(input => {
   input.addEventListener('input', () => {
-    if (state.waveformSignature && (!elements.audioElement || elements.audioElement.paused)) {
-      const currentFrameIndex = Math.floor((elements.audioElement.currentTime || 0) * (state.waveformSignature.fps || 30));
-      const frame = state.waveformSignature.getFrame(currentFrameIndex);
-      drawCurrentFrame(frame);
-    }
+    redrawPreview();
   });
 });
 
-// 4. Previsualización de Audio
+// =========================================================================
+// 8. INTERACCIÓN DIRECTA EN CANVAS (DRAG & DROP DE PORTADA)
+// =========================================================================
+function getCanvasCoordinates(e) {
+  const rect = elements.canvas.getBoundingClientRect();
+  const scaleX = elements.canvas.width / rect.width;
+  const scaleY = elements.canvas.height / rect.height;
+  return {
+    x: (e.clientX - rect.left) * scaleX,
+    y: (e.clientY - rect.top) * scaleY
+  };
+}
+
+function isPointOverOverlay(coords) {
+  if (!state.designer.overlay.image) return false;
+  const w = elements.canvas.width;
+  const h = elements.canvas.height;
+  const size = Math.min(w, h) * state.designer.overlay.relSize;
+  const ox = w * state.designer.overlay.relX - size / 2;
+  const oy = h * state.designer.overlay.relY - size / 2;
+  return (
+    coords.x >= ox &&
+    coords.x <= ox + size &&
+    coords.y >= oy &&
+    coords.y <= oy + size
+  );
+}
+
+elements.canvas.addEventListener('mousedown', (e) => {
+  if (!state.designer.overlay.image) return;
+  const coords = getCanvasCoordinates(e);
+
+  if (isPointOverOverlay(coords)) {
+    state.designer.isDraggingOverlay = true;
+    const w = elements.canvas.width;
+    const h = elements.canvas.height;
+    state.designer.dragOffset = {
+      x: coords.x - (w * state.designer.overlay.relX),
+      y: coords.y - (h * state.designer.overlay.relY)
+    };
+    elements.canvas.classList.add('grabbing');
+    elements.canvas.classList.remove('grab');
+    redrawPreview();
+  }
+});
+
+window.addEventListener('mousemove', (e) => {
+  const coords = getCanvasCoordinates(e);
+
+  if (state.designer.isDraggingOverlay) {
+    const w = elements.canvas.width;
+    const h = elements.canvas.height;
+    const newX = (coords.x - state.designer.dragOffset.x) / w;
+    const newY = (coords.y - state.designer.dragOffset.y) / h;
+
+    // Limitar dentro del lienzo con márgenes de seguridad
+    state.designer.overlay.relX = Math.max(0.05, Math.min(0.95, newX));
+    state.designer.overlay.relY = Math.max(0.05, Math.min(0.95, newY));
+
+    redrawPreview();
+  } else if (state.designer.overlay.image) {
+    if (isPointOverOverlay(coords)) {
+      elements.canvas.classList.add('grab');
+    } else {
+      elements.canvas.classList.remove('grab');
+    }
+  }
+});
+
+window.addEventListener('mouseup', () => {
+  if (state.designer.isDraggingOverlay) {
+    state.designer.isDraggingOverlay = false;
+    elements.canvas.classList.remove('grabbing');
+    redrawPreview();
+  }
+});
+
+// =========================================================================
+// 9. PREVISUALIZACIÓN DE AUDIO
+// =========================================================================
 elements.btnPlayPause.addEventListener('click', async () => {
   const audio = elements.audioElement;
   if (!audio.src) return;
@@ -214,7 +479,7 @@ function startRealtimePreviewLoop() {
       );
 
       const frameData = state.waveformSignature.getFrame(frameIndex);
-      drawCurrentFrame(frameData);
+      drawCurrentFrame(frameData, !!state.designer.overlay.image && !elements.audioElement.paused ? false : true);
 
       state.animationFrameId = requestAnimationFrame(loop);
     }
@@ -223,7 +488,9 @@ function startRealtimePreviewLoop() {
   loop();
 }
 
-// 5. Motor de Generación de Video con Contrapresión
+// =========================================================================
+// 10. MOTOR DE GENERACIÓN DE VIDEO
+// =========================================================================
 elements.btnRender.addEventListener('click', async () => {
   if (!state.audioBuffer || !state.waveformSignature) {
     alert('Primero debes cargar un archivo de audio.');
@@ -241,7 +508,6 @@ elements.btnRender.addEventListener('click', async () => {
   const format = elements.formatSelect.value;
   const useDirectDisk = elements.checkDirectDisk && elements.checkDirectDisk.checked && isFileSystemAccessSupported();
 
-  // Re-extraer firma si los FPS de exportación cambiaron
   let exportSignature = state.waveformSignature;
   if (exportSignature.fps !== fps) {
     exportSignature = extractWaveformSignature(state.audioBuffer, fps, 64);
@@ -261,10 +527,10 @@ elements.btnRender.addEventListener('click', async () => {
       fileWritableStream = await handle.createWritable();
     } catch (pickerErr) {
       if (pickerErr.name === 'AbortError') {
-        console.info('[ExportEngine] Guardado en disco cancelado por el usuario.');
-        return; // El usuario canceló la selección de archivo
+        console.info('[ExportEngine] Selección cancelada por el usuario.');
+        return;
       }
-      console.warn('[ExportEngine] Fallo al crear stream en disco, usando memoria:', pickerErr);
+      console.warn('[ExportEngine] Usando memoria:', pickerErr);
     }
   }
 
@@ -303,13 +569,7 @@ elements.btnRender.addEventListener('click', async () => {
       height,
       fps,
       bitrate: 5_000_000,
-      styleOptions: {
-        style: elements.visualizerTypeSelect.value,
-        accentColor: elements.colorAccentInput.value,
-        secondaryColor: elements.colorSecondaryInput.value,
-        title: elements.videoTitleInput.value || '',
-        subtitle: state.audioFile?.name || ''
-      },
+      styleOptions: getRenderOptions(false), // Sin guías de selección en el video exportado
       fileWritableStream,
       signal: state.abortController.signal,
       onProgress: (stats) => {
@@ -336,7 +596,6 @@ elements.btnRender.addEventListener('click', async () => {
       }
     });
 
-    // Cerrar stream a disco si fue usado
     if (fileWritableStream) {
       await fileWritableStream.close();
     }
@@ -361,7 +620,6 @@ elements.btnRender.addEventListener('click', async () => {
       elements.btnDownloadVideo.download = result.filename;
       elements.btnDownloadVideo.classList.remove('hidden');
 
-      // Disparar descarga automática
       const downloadLink = document.createElement('a');
       downloadLink.href = videoUrl;
       downloadLink.download = result.filename;
