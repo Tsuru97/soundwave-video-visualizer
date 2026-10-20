@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Soundwave Video Visualizer - Client-Side Generator</title>
+    <title>Soundwave Video Visualizer - Multi-Track Audio & Multi-Layer Designer</title>
     <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%236366f1'><path d='M12 3v18M8 6v12M4 9v6M16 6v12M20 9v6'/></svg>" />
     <link rel="stylesheet" href="./src/style.css" />
   </head>
@@ -16,7 +16,7 @@
           </div>
           <div>
             <h1>Soundwave Video Visualizer</h1>
-            <p class="subtitle">Generador de Video de Ondas Sonoras Client-Side</p>
+            <p class="subtitle">Generador y Diseñador Multi-Pista Client-Side</p>
           </div>
         </div>
         <div class="status-badge" id="isolation-status">
@@ -29,22 +29,23 @@
         <!-- Panel de Diagnóstico de Seguridad -->
         <section class="card security-banner" id="security-panel">
           <div class="security-info">
-            <h3 id="security-title">Cabeceras de Seguridad</h3>
+            <h3 id="security-title">Cabeceras de Seguridad y Aceleración</h3>
             <p id="security-desc">
-              Verificando <code>Cross-Origin-Opener-Policy</code> y <code>Cross-Origin-Embedder-Policy</code> para SharedArrayBuffer y WebCodecs/FFmpeg WASM.
+              <code>Cross-Origin-Opener-Policy: same-origin</code> y <code>Cross-Origin-Embedder-Policy: require-corp</code> activos para WebCodecs y multihilo.
             </p>
           </div>
           <div class="badges-container">
             <span class="badge" id="badge-coop">COOP: same-origin</span>
             <span class="badge" id="badge-coep">COEP: require-corp</span>
-            <span class="badge" id="badge-sab">SharedArrayBuffer: Checking...</span>
+            <span class="badge" id="badge-sab">SharedArrayBuffer</span>
+            <span class="badge" id="badge-webcodecs">WebCodecs: Checking...</span>
           </div>
         </section>
 
-        <!-- Visualizador Principal -->
+        <!-- Visualizador Principal y Diseñador Multi-Capa -->
         <section class="visualizer-grid">
           <div class="card visualizer-card">
-            <div class="canvas-wrapper">
+            <div class="canvas-wrapper" id="canvas-container">
               <canvas id="visualizer-canvas" width="1280" height="720"></canvas>
               <div class="canvas-overlay" id="canvas-overlay">
                 <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
@@ -52,11 +53,14 @@
                   <circle cx="6" cy="18" r="3"></circle>
                   <circle cx="18" cy="16" r="3"></circle>
                 </svg>
-                <p>Carga un archivo de audio para visualizar la onda sonora</p>
+                <p>Carga la pista principal de audio para comenzar</p>
+              </div>
+              <div class="canvas-hint hidden" id="canvas-drag-hint">
+                <span>🖱️ Arrastra cualquier elemento en el lienzo para reposicionarlo</span>
               </div>
             </div>
 
-            <!-- Controles de Reproducción -->
+            <!-- Controles de Reproducción y Previsualización -->
             <div class="player-controls">
               <audio id="audio-element" controls style="display: none;"></audio>
               <div class="audio-actions">
@@ -66,61 +70,361 @@
                     <polyline points="17 8 12 3 7 8"></polyline>
                     <line x1="12" y1="3" x2="12" y2="15"></line>
                   </svg>
-                  Cargar Archivo de Audio
+                  Cargar Pista Principal
                 </label>
                 <input type="file" id="audio-upload" accept="audio/*" style="display: none;" />
 
                 <button class="btn btn-secondary" id="btn-play-pause" disabled>
-                  <span id="play-icon">▶ Reproducir</span>
+                  <span id="play-icon">▶ Reproducir Secuencia Completa</span>
                 </button>
-                <span class="file-info" id="file-info">Ningún archivo cargado</span>
+                <span class="file-info" id="file-info">Ningún audio cargado</span>
               </div>
+            </div>
+
+            <!-- Widget de Línea de Tiempo Resumen de Audio -->
+            <div class="timeline-summary-card hidden" id="timeline-summary-card">
+              <div class="timeline-summary-header">
+                <span class="timeline-title">⏱️ Secuencia de Audio Concatenada</span>
+                <span class="timeline-total-badge" id="timeline-total-badge">Total: 00:00</span>
+              </div>
+              <div class="timeline-segments" id="timeline-segments">
+                <!-- Se inyectan dinámicamente los bloques Intro -> Principal -> Outro -->
+              </div>
+            </div>
+
+            <!-- Barra de Estado de Procesamiento -->
+            <div class="signature-status hidden" id="signature-status-bar">
+              <span class="pulse-icon">⚡</span>
+              <span id="signature-status-text">Procesando audio y extrayendo firma de onda...</span>
             </div>
           </div>
 
-          <!-- Panel de Ajustes del Generador -->
+          <!-- Panel de Control con Pestañas de Diseño -->
           <aside class="card settings-card">
-            <h3>Configuración del Video</h3>
-            <div class="form-group">
-              <label for="visualizer-type">Estilo de Visualización</label>
-              <select id="visualizer-type" class="form-control">
-                <option value="bars">Barras de Frecuencia Simétricas</option>
-                <option value="wave">Onda Continua (Waveform)</option>
-                <option value="circular">Onda Radial Circular</option>
-              </select>
+            <!-- Pestañas de Navegación -->
+            <div class="tabs-nav">
+              <button class="tab-btn active" data-tab="tab-designer">🎨 Capas y Fondo</button>
+              <button class="tab-btn" data-tab="tab-audio">🎵 Audio e Intro/Outro</button>
+              <button class="tab-btn" data-tab="tab-export">⚙️ Exportar</button>
             </div>
 
-            <div class="form-group">
-              <label for="color-accent">Color de Onda</label>
-              <input type="color" id="color-accent" value="#6366f1" class="form-control-color" />
+            <!-- TAB 1: DISEÑADOR VISUAL MULTI-CAPA -->
+            <div class="tab-content active" id="tab-designer">
+              <!-- Sección Fondo del Video -->
+              <div class="designer-section">
+                <div class="section-title-row">
+                  <h4>🌄 Fondo</h4>
+                  <button class="btn-link hidden" id="btn-remove-bg">Quitar</button>
+                </div>
+
+                <label class="btn btn-secondary full-width btn-sm" for="bg-upload">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+                    <circle cx="8.5" cy="8.5" r="1.5"></circle>
+                    <polyline points="21 15 16 10 5 21"></polyline>
+                  </svg>
+                  Cargar Imagen de Fondo
+                </label>
+                <input type="file" id="bg-upload" accept="image/*" style="display: none;" />
+
+                <div class="slider-group" id="bg-controls">
+                  <div class="slider-row">
+                    <label for="bg-blur">Desenfoque (Blur): <span id="val-bg-blur">10px</span></label>
+                    <input type="range" id="bg-blur" min="0" max="30" value="10" class="range-slider" />
+                  </div>
+                  <div class="slider-row">
+                    <label for="bg-dim">Oscurecimiento: <span id="val-bg-dim">45%</span></label>
+                    <input type="range" id="bg-dim" min="0" max="90" value="45" class="range-slider" />
+                  </div>
+                </div>
+              </div>
+
+              <!-- Sección Añadir Capas (Imágenes o Textos) -->
+              <div class="designer-section">
+                <div class="section-title-row">
+                  <h4>✨ Capas del Video</h4>
+                  <span class="layers-count-badge" id="layers-count-badge">0 capas</span>
+                </div>
+
+                <div class="add-layers-toolbar">
+                  <label class="btn btn-secondary flex-1 btn-sm" for="layer-img-upload">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+                      <circle cx="8.5" cy="8.5" r="1.5"></circle>
+                      <polyline points="21 15 16 10 5 21"></polyline>
+                    </svg>
+                    + Imagen
+                  </label>
+                  <input type="file" id="layer-img-upload" accept="image/*" style="display: none;" />
+
+                  <button class="btn btn-secondary flex-1 btn-sm" id="btn-add-text">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <polyline points="4 7 4 4 20 4 20 7"></polyline>
+                      <line x1="9" y1="20" x2="15" y2="20"></line>
+                      <line x1="12" y1="4" x2="12" y2="20"></line>
+                    </svg>
+                    + Texto
+                  </button>
+                </div>
+
+                <!-- Lista de Capas Creadas -->
+                <div class="layers-list" id="layers-list">
+                  <p class="empty-layers-msg" id="empty-layers-msg">
+                    No hay capas superpuestas. Pulsa <strong>+ Imagen</strong> o <strong>+ Texto</strong> para añadir portadas, logos o créditos.
+                  </p>
+                </div>
+              </div>
+
+              <!-- Inspector de la Capa Seleccionada -->
+              <div class="designer-section hidden" id="layer-inspector">
+                <div class="section-title-row">
+                  <h4 id="inspector-title">Propiedades de Capa</h4>
+                  <button class="btn-link" id="btn-delete-selected-layer">Eliminar Capa</button>
+                </div>
+
+                <!-- Propiedades específicas para Imagen -->
+                <div class="inspector-fields hidden" id="inspector-image-fields">
+                  <div class="form-group">
+                    <label for="layer-img-shape">Forma</label>
+                    <select id="layer-img-shape" class="form-control">
+                      <option value="rounded">Cuadrada con Esquinas Redondeadas</option>
+                      <option value="circle">Circular (Disco de Vinilo / Avatar)</option>
+                    </select>
+                  </div>
+                  <div class="slider-row">
+                    <label for="layer-img-size">Tamaño: <span id="val-layer-img-size">28%</span></label>
+                    <input type="range" id="layer-img-size" min="10" max="60" value="28" class="range-slider" />
+                  </div>
+                  <div class="slider-row">
+                    <label for="layer-img-opacity">Opacidad: <span id="val-layer-img-opacity">100%</span></label>
+                    <input type="range" id="layer-img-opacity" min="20" max="100" value="100" class="range-slider" />
+                  </div>
+                </div>
+
+                <!-- Propiedades específicas para Texto -->
+                <div class="inspector-fields hidden" id="inspector-text-fields">
+                  <div class="form-group">
+                    <label for="layer-text-content">Texto</label>
+                    <input type="text" id="layer-text-content" class="form-control" placeholder="Escribe tu texto..." />
+                  </div>
+                  <div class="form-row">
+                    <div class="form-group flex-1">
+                      <label for="layer-text-color">Color</label>
+                      <input type="color" id="layer-text-color" value="#ffffff" class="form-control-color" />
+                    </div>
+                    <div class="form-group flex-1">
+                      <label for="layer-text-font">Tipografía</label>
+                      <select id="layer-text-font" class="form-control">
+                        <option value="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif">Moderna Sans</option>
+                        <option value="Impact, sans-serif">Impact / Potente</option>
+                        <option value="Georgia, serif">Elegante Serif</option>
+                        <option value="'Courier New', monospace">Monospace / Retro</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div class="slider-row">
+                    <label for="layer-text-size">Tamaño: <span id="val-layer-text-size">4.2%</span></label>
+                    <input type="range" id="layer-text-size" min="15" max="100" value="42" class="range-slider" />
+                  </div>
+                  <div class="slider-row">
+                    <label for="layer-text-opacity">Opacidad: <span id="val-layer-text-opacity">100%</span></label>
+                    <input type="range" id="layer-text-opacity" min="20" max="100" value="100" class="range-slider" />
+                  </div>
+                </div>
+
+                <p class="designer-hint">💡 <em>Arrastra directamente el elemento sobre el canvas para cambiar su posición.</em></p>
+              </div>
             </div>
 
-            <div class="form-group">
-              <label for="resolution-select">Resolución de Exportación</label>
-              <select id="resolution-select" class="form-control">
-                <option value="1080p">1920x1080 (Full HD 16:9)</option>
-                <option value="720p" selected>1280x720 (HD 16:9)</option>
-                <option value="story">1080x1920 (Vertical 9:16)</option>
-                <option value="square">1080x1080 (Cuadrado 1:1)</option>
-              </select>
+            <!-- TAB 2: GESTIÓN DE AUDIO (INTRO, PRINCIPAL, OUTRO) Y ONDA -->
+            <div class="tab-content" id="tab-audio">
+              <!-- Ranuras de Audio Adicionales -->
+              <div class="designer-section">
+                <div class="section-title-row">
+                  <h4>🟢 Audio de Entrada (Intro)</h4>
+                  <button class="btn-link hidden" id="btn-remove-intro">Quitar Intro</button>
+                </div>
+                <div class="audio-slot-body">
+                  <label class="btn btn-secondary full-width btn-sm" for="intro-upload">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <polygon points="5 3 19 12 5 21 5 3"></polygon>
+                    </svg>
+                    Subir Audio de Intro (Jingle / Cortinilla)
+                  </label>
+                  <input type="file" id="intro-upload" accept="audio/*" style="display: none;" />
+                  <span class="audio-slot-info" id="intro-file-info">Sin audio de intro seleccionado</span>
+                </div>
+              </div>
+
+              <div class="designer-section">
+                <div class="section-title-row">
+                  <h4>🟣 Audio de Salida (Outro)</h4>
+                  <button class="btn-link hidden" id="btn-remove-outro">Quitar Outro</button>
+                </div>
+                <div class="audio-slot-body">
+                  <label class="btn btn-secondary full-width btn-sm" for="outro-upload">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <rect x="6" y="4" width="4" height="16"></rect>
+                      <polygon points="20 4 20 20 11 12 20 4"></polygon>
+                    </svg>
+                    Subir Audio de Outro (Créditos / Despedida)
+                  </label>
+                  <input type="file" id="outro-upload" accept="audio/*" style="display: none;" />
+                  <span class="audio-slot-info" id="outro-file-info">Sin audio de outro seleccionado</span>
+                </div>
+              </div>
+
+              <!-- Estilo de Onda Sonora -->
+              <div class="designer-section">
+                <div class="section-title-row">
+                  <h4>🌊 Estilo de la Onda Sonora</h4>
+                </div>
+                <div class="form-group">
+                  <label for="visualizer-type">Forma de la Onda</label>
+                  <select id="visualizer-type" class="form-control">
+                    <option value="bars" selected>Barras de Frecuencia Simétricas</option>
+                    <option value="wave">Onda Continua (Osciloscopio)</option>
+                    <option value="circular">Onda Radial Circular</option>
+                  </select>
+                </div>
+
+                <div class="form-row">
+                  <div class="form-group flex-1">
+                    <label for="color-accent">Color Primario</label>
+                    <input type="color" id="color-accent" value="#6366f1" class="form-control-color" />
+                  </div>
+                  <div class="form-group flex-1">
+                    <label for="color-secondary">Color Secundario</label>
+                    <input type="color" id="color-secondary" value="#06b6d4" class="form-control-color" />
+                  </div>
+                </div>
+              </div>
             </div>
 
+            <!-- TAB 3: CONFIGURACIÓN DE EXPORTACIÓN -->
+            <div class="tab-content" id="tab-export">
+              <div class="form-group">
+                <label for="export-engine-select">Motor de Exportación</label>
+                <select id="export-engine-select" class="form-control">
+                  <option value="webcodecs" selected>⚡ Acelerado (WebCodecs - Máxima Velocidad)</option>
+                  <option value="mediarecorder">🔴 Grabación en Caliente (MediaRecorder)</option>
+                </select>
+              </div>
+
+              <div class="form-group">
+                <label for="resolution-select">Resolución de Exportación</label>
+                <select id="resolution-select" class="form-control">
+                  <option value="1280x720" selected>1280x720 (HD 16:9 - Rápido y Ligero)</option>
+                  <option value="1920x1080">1920x1080 (Full HD 16:9)</option>
+                  <option value="1080x1920">1080x1920 (Vertical 9:16 Shorts/Reels)</option>
+                  <option value="1080x1080">1080x1080 (Cuadrado 1:1)</option>
+                </select>
+              </div>
+
+              <div class="form-row">
+                <div class="form-group flex-1">
+                  <label for="fps-select">FPS</label>
+                  <select id="fps-select" class="form-control">
+                    <option value="30" selected>30 FPS (Recomendado)</option>
+                    <option value="60">60 FPS (Ultra Fluido)</option>
+                  </select>
+                </div>
+                <div class="form-group flex-1">
+                  <label for="format-select">Formato</label>
+                  <select id="format-select" class="form-control">
+                    <option value="mp4" selected>MP4 (H.264 + AAC)</option>
+                    <option value="webm">WebM (VP9 + Opus)</option>
+                  </select>
+                </div>
+              </div>
+
+              <div class="form-group checkbox-group" id="group-direct-disk">
+                <label class="checkbox-label">
+                  <input type="checkbox" id="check-direct-disk" checked />
+                  <span>
+                    <strong>Guardar directo a disco (Streaming)</strong>
+                    <small class="checkbox-desc">Escribe directo al archivo local con 0% uso de RAM.</small>
+                  </span>
+                </label>
+              </div>
+            </div>
+
+            <!-- Acción de Generación (Siempre visible) -->
             <div class="generator-action">
               <button class="btn btn-accent full-width" id="btn-render" disabled>
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                   <polygon points="23 7 16 12 23 17 23 7"></polygon>
                   <rect x="1" y="5" width="15" height="14" rx="2" ry="2"></rect>
                 </svg>
                 Generar Video (Client-Side)
               </button>
-              <p class="help-text">La generación utiliza renderizado directo en navegador con WebCodecs / FFmpeg WebAssembly.</p>
+              <p class="help-text" id="export-help-text">
+                Contrapresión activa: la memoria RAM se mantendrá controlada en todo momento.
+              </p>
             </div>
           </aside>
         </section>
       </main>
 
+      <!-- Modal de Progreso de Generación -->
+      <div class="modal-overlay hidden" id="progress-modal">
+        <div class="modal-card">
+          <div class="modal-header">
+            <h3 id="modal-title">Generando Video Client-Side...</h3>
+            <span class="modal-status-badge" id="modal-engine-badge">WebCodecs</span>
+          </div>
+
+          <div class="modal-body">
+            <div class="progress-bar-container">
+              <div class="progress-bar-fill" id="progress-fill" style="width: 0%;"></div>
+            </div>
+            <div class="progress-percentage-label">
+              <span id="progress-percent">0%</span>
+              <span id="progress-frames-label">0 / 0 fotogramas</span>
+            </div>
+
+            <div class="stats-grid">
+              <div class="stat-box">
+                <span class="stat-label">Velocidad</span>
+                <span class="stat-value" id="stat-fps">0 fps</span>
+              </div>
+              <div class="stat-box">
+                <span class="stat-label">Memoria RAM Heap</span>
+                <span class="stat-value text-success" id="stat-ram">-- MB</span>
+              </div>
+              <div class="stat-box">
+                <span class="stat-label">Tiempo Transcurrido</span>
+                <span class="stat-value" id="stat-elapsed">00:00</span>
+              </div>
+              <div class="stat-box">
+                <span class="stat-label">Tiempo Restante (ETA)</span>
+                <span class="stat-value" id="stat-eta">Calculando...</span>
+              </div>
+            </div>
+
+            <div class="result-area hidden" id="result-area">
+              <p class="result-success" id="result-message">🎉 ¡Video generado con éxito!</p>
+              <video id="video-preview-player" controls class="video-preview-player"></video>
+            </div>
+          </div>
+
+          <div class="modal-footer">
+            <button class="btn btn-secondary" id="btn-cancel-render">Cancelar Generación</button>
+            <a class="btn btn-primary hidden" id="btn-download-video" download="soundwave-video.mp4">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                <polyline points="7 10 12 15 17 10"></polyline>
+                <line x1="12" y1="15" x2="12" y2="3"></line>
+              </svg>
+              Descargar Video Listo
+            </a>
+            <button class="btn btn-secondary hidden" id="btn-close-modal">Cerrar</button>
+          </div>
+        </div>
+      </div>
+
       <footer class="footer">
-        <p>Soundwave Video Visualizer &bull; Entorno de Desarrollo Dockerizado &bull; Node.js 20 Alpine</p>
+        <p>Soundwave Video Visualizer &bull; Audio Multi-Pista y Renderizado Client-Side &bull; Docker Node.js 20 Alpine</p>
       </footer>
     </div>
     <script type="module" src="./src/main.js"></script>
