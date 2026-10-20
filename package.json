@@ -1,0 +1,26 @@
+{
+  "name": "soundwave-generator",
+  "version": "1.0.0",
+  "description": "Client-Side Soundwave Video Generator Monorepo",
+  "private": true,
+  "workspaces": [
+    "frontend"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspace=frontend",
+    "build": "npm run build --workspace=frontend",
+    "preview": "npm run preview --workspace=frontend",
+    "docker:up": "docker compose up --build",
+    "docker:down": "docker compose down"
+  },
+  "keywords": [
+    "soundwave",
+    "video-generator",
+    "audio-visualizer",
+    "vite",
+    "client-side",
+    "ffmpeg-wasm"
+  ],
+  "author": "",
+  "license": "ISC"
+}

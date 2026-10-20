@@ -1,0 +1,21 @@
+services:
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: soundwave-frontend
+    ports:
+      - "3000:3000"
+    volumes:
+      # Montaje del volumen hacia la carpeta frontend/ local para Hot Reload en vivo
+      - ./frontend:/app
+      # Preservar node_modules aislados en el contenedor
+      - /app/node_modules
+    environment:
+      - NODE_ENV=development
+      # Habilitar polling para garantizar que los cambios en Windows se detecten dentro del contenedor
+      - CHOKIDAR_USEPOLLING=true
+      - WATCHPACK_POLLING=true
+    stdin_open: true
+    tty: true
+    restart: unless-stopped
